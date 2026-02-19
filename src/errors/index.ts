@@ -52,3 +52,31 @@ export class ClaudeRunnerTimeoutError extends JorchBotError {}
 
 /** Claude Code process exited with non-zero code or other runtime error */
 export class ClaudeRunnerProcessError extends JorchBotError {}
+
+// --- Session errors (Phase 2) ---
+
+/** Failed to create a session (DB, config, or runner failure) */
+export class SessionCreateError extends JorchBotError {}
+
+/** Session not found by project name or ID */
+export class SessionNotFoundError extends JorchBotError {}
+
+/** Maximum concurrent sessions limit reached */
+export class SessionLimitError extends JorchBotError {}
+
+/** Session with this project name already exists */
+export class SessionAlreadyExistsError extends JorchBotError {}
+
+/** Failed to destroy a session cleanly */
+export class SessionDestroyError extends JorchBotError {}
+
+// --- Shell errors (Phase 2) ---
+
+/** Shell command execution failed */
+export class ShellRunnerExecError extends JorchBotError {}
+
+/** Shell command timed out */
+export class ShellRunnerTimeoutError extends JorchBotError {}
+
+/** Dangerous shell command detected (used internally, not thrown to user) */
+export class ShellRunnerDangerousCommandError extends JorchBotError {}

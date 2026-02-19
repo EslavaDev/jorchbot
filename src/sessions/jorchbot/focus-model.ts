@@ -1,19 +1,35 @@
 /**
- * @module sessions/jorchbot/focus-model
- * @phase 2
- * @description Focus Model — tracks which session is "focused" in single-threaded chat
- * @status placeholder
+ * Focus Model — tracks which session is "focused" in single-threaded chat.
+ *
+ * 100% JorchBot-specific (Layer 2). OpenClaw has NO concept of a focused
+ * session because each channel has its own independent conversation.
+ *
+ * WhatsApp is single-threaded: all sessions share one chat. The Focus Model
+ * determines which session receives free-text messages and $ commands.
+ *
+ * State is kept in-memory (source of truth) and mirrored to DB (persistence)
+ * by SessionManager.
  */
+export class FocusModel {
+  private focusedProject: string | null = null;
 
-// Phase 2: Focus Model
-// NOTE (DeepWiki rev.2): This is 100% JorchBot-specific (Layer 2).
-// OpenClaw has NO concept of a "focused session" — each channel has its own
-// conversation. Since WhatsApp is single-threaded, JorchBot needs a Focus Model
-// to route free-text messages to the correct session.
-//
-// Only ONE session can be focused at a time. Background sessions buffer output
-// and only send critical notifications (approvals, errors, completions).
-//
-// State tracked in JorchBot DB (sessions table, focused column).
-// See: docs/phase-2-multi-session.md (section 2.2)
-export type FocusModelPlaceholder = Record<string, never>;
+  /** Get the currently focused project name, or null if none. */
+  getFocused(): string | null {
+    return this.focusedProject;
+  }
+
+  /** Set the focused project. */
+  setFocused(project: string): void {
+    this.focusedProject = project;
+  }
+
+  /** Clear focus (no session focused). */
+  clearFocus(): void {
+    this.focusedProject = null;
+  }
+
+  /** Check if a specific project is focused. */
+  isFocused(project: string): boolean {
+    return this.focusedProject === project;
+  }
+}

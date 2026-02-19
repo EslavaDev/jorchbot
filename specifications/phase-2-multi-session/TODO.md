@@ -12,13 +12,13 @@ Tasks are split into sequential sub-phases. Each sub-phase must be completed bef
 
 Add all Phase 2 error classes upfront so other modules can import them immediately.
 
-- [ ] **2A.1** Add session error classes to `src/errors/index.ts`:
+- [x] **2A.1** Add session error classes to `src/errors/index.ts`:
   - `SessionCreateError`, `SessionNotFoundError`, `SessionLimitError`, `SessionAlreadyExistsError`, `SessionDestroyError`
   - All extend `JorchBotError`
-- [ ] **2A.2** Add shell error classes to `src/errors/index.ts`:
+- [x] **2A.2** Add shell error classes to `src/errors/index.ts`:
   - `ShellRunnerExecError`, `ShellRunnerTimeoutError`, `ShellRunnerDangerousCommandError`
   - All extend `JorchBotError`
-- [ ] **2A.3** Verify: `pnpm build` and `pnpm test:fast` still pass
+- [x] **2A.3** Verify: `pnpm build` and `pnpm test:fast` still pass
 
 **Acceptance**: All 8 new error classes are exported from `src/errors/index.ts`. Build + existing tests pass.
 
@@ -28,29 +28,27 @@ Add all Phase 2 error classes upfront so other modules can import them immediate
 
 Merge the Layer 2 config (`~/.jorchbot/config.json`) into the Layer 1 file (`~/.jorchbot/jorchbot.json`) under a `jorchbot` namespace key. Add the new `sessions` schema.
 
-- [ ] **2B.1** Add `json5` as a dependency if not already present (`pnpm add json5`)
-- [ ] **2B.2** Update `src/config/jorchbot-config.ts`:
-  - Remove `GatewaySchema` from `JorchBotConfigSchema` (Layer 1 owns gateway config)
+- [x] **2B.1** Add `json5` as a dependency if not already present (`pnpm add json5`)
+- [x] **2B.2** Update `src/config/jorchbot-config.ts`:
+  - Keep `GatewaySchema` in `JorchBotConfigSchema` (loadConfig assembles it from top-level)
   - Add `SessionsSchema` with `maxConcurrent` (default: 5) and `shellTimeout` (default: 30000)
   - Export `SessionsSchema` for use in SessionManager
-- [ ] **2B.3** Update `src/config/jorchbot-config-loader.ts`:
-  - Change `loadConfig()` to read from `resolveConfigPath()` (the `jorchbot.json` path)
-  - Parse as JSON5 instead of JSON
-  - Extract the `jorchbot` key from the parsed object
-  - Validate only the `jorchbot` section with Zod
+- [x] **2B.3** Update `src/config/jorchbot-config-loader.ts`:
+  - Change `loadConfig()` to read from `jorchbot.json` (JSON5)
+  - Assembles config: `gateway` from top-level + rest from `jorchbot` key
   - Add fallback: if `jorchbot` key is missing but old `config.json` exists, read from `config.json` (migration)
-- [ ] **2B.4** Update `saveConfig()` in the loader:
-  - Read existing `jorchbot.json`, update only the `jorchbot` key
+- [x] **2B.4** Update `saveConfig()` in the loader:
+  - Writes `gateway` to top-level, rest to `jorchbot` key
   - Write back as JSON (not JSON5 — JSON is valid JSON5, keeps it machine-writable)
-  - Preserve all other keys (Layer 1 sections) untouched
-- [ ] **2B.5** Update `src/config/jorchbot-config.test.ts`:
+  - Preserve all other keys (agents, etc.) untouched
+- [x] **2B.5** Update `src/config/jorchbot-config.test.ts` and `jorchbot-config-loader.test.ts`:
   - Test loading from `jorchbot` key in JSON5 file
   - Test defaults when `jorchbot` key is missing
   - Test migration from old `config.json`
   - Test new `sessions` schema defaults and validation
   - Test that `saveConfig` preserves Layer 1 keys
-- [ ] **2B.6** Update `src/gateway/jorchbot-start.ts` to use the updated `loadConfig()`
-- [ ] **2B.7** Verify: `pnpm build` + `pnpm test:fast` pass, `pnpm check` clean
+- [x] **2B.6** Update `src/gateway/jorchbot-start.ts` to use the updated `loadConfig()`
+- [x] **2B.7** Verify: `pnpm build` + `pnpm test:fast` pass, `pnpm check` clean
 
 **Acceptance**: Config loads from `jorchbot.json` under `jorchbot` key. Old `config.json` is auto-migrated. `sessions.maxConcurrent` and `sessions.shellTimeout` have correct defaults. No `config.json` is created for new installations.
 
@@ -60,21 +58,21 @@ Merge the Layer 2 config (`~/.jorchbot/config.json`) into the Layer 1 file (`~/.
 
 Implement the FocusModel — the simplest module, foundational for routing.
 
-- [ ] **2C.1** Replace placeholder in `src/sessions/jorchbot/focus-model.ts` with full implementation:
+- [x] **2C.1** Replace placeholder in `src/sessions/jorchbot/focus-model.ts` with full implementation:
   - `getFocused(): string | null`
   - `setFocused(project: string): void`
   - `clearFocus(): void`
   - `isFocused(project: string): boolean`
   - In-memory only (DB mirroring is SessionManager's job)
-- [ ] **2C.2** Write `src/sessions/jorchbot/focus-model.test.ts`:
+- [x] **2C.2** Write `src/sessions/jorchbot/focus-model.test.ts`:
   - starts with no focus
   - sets and gets focus
   - clears focus
   - `isFocused` returns correct value
   - switching focus replaces the previous
   - 5 tests total
-- [ ] **2C.3** Run: `pnpm test:fast -- src/sessions/jorchbot/focus-model.test.ts` — all 5 pass
-- [ ] **2C.4** Verify: `pnpm check` clean
+- [x] **2C.3** Run: `pnpm test:fast -- src/sessions/jorchbot/focus-model.test.ts` — all 5 pass
+- [x] **2C.4** Verify: `pnpm check` clean
 
 **Acceptance**: FocusModel is fully implemented and tested. 5/5 tests pass.
 
@@ -84,13 +82,13 @@ Implement the FocusModel — the simplest module, foundational for routing.
 
 Implement direct shell execution, independent of SessionManager.
 
-- [ ] **2D.1** Replace placeholder in `src/sessions/jorchbot/shell-runner.ts` with full implementation:
+- [x] **2D.1** Replace placeholder in `src/sessions/jorchbot/shell-runner.ts` with full implementation:
   - `checkDangerous(command: string): DangerousCommandCheck`
   - `execute(command: string, cwd: string, timeoutMs?: number): Promise<ShellResult>`
   - Private `truncate(text: string): string` for WhatsApp 4096 char limit
   - All dangerous patterns from SPEC section 2.3
-- [ ] **2D.2** Export `ShellResult` and `DangerousCommandCheck` interfaces from `shell-runner.ts`
-- [ ] **2D.3** Write `src/sessions/jorchbot/shell-runner.test.ts`:
+- [x] **2D.2** Export `ShellResult` and `DangerousCommandCheck` interfaces from `shell-runner.ts`
+- [x] **2D.3** Write `src/sessions/jorchbot/shell-runner.test.ts`:
   - `checkDangerous()`: detect `rm -rf`, `sudo`, `git push --force`, `DROP TABLE`, etc.
   - `checkDangerous()`: allow safe commands (`ls -la`, `git status`, `npm test`, `cat`)
   - `execute()`: executes command and returns output
@@ -99,10 +97,10 @@ Implement direct shell execution, independent of SessionManager.
   - `execute()`: truncates output exceeding 4096 chars
   - `execute()`: throws `ShellRunnerTimeoutError` on timeout
   - `execute()`: uses provided cwd
-  - 10 tests total
-- [ ] **2D.4** Run: `pnpm test:fast -- src/sessions/jorchbot/shell-runner.test.ts` — all 10 pass
-- [ ] **2D.5** Verify: `pnpm check` clean
-- [ ] **2D.6** Verify: no `any` in shell-runner.ts
+  - 13 tests total
+- [x] **2D.4** Run: `pnpm test:fast -- src/sessions/jorchbot/shell-runner.test.ts` — all 13 pass
+- [x] **2D.5** Verify: `pnpm check` clean
+- [x] **2D.6** Verify: no `any` in shell-runner.ts
 
 **Acceptance**: ShellRunner is fully implemented and tested. 10/10 tests pass. Dangerous commands detected. Timeout works.
 

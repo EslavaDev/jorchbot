@@ -46,16 +46,29 @@ const ApprovalsSchema = z.object({
   timeoutMinutes: z.number().int().min(1).default(10),
   pauseTimeoutMinutes: z.number().int().min(1).default(60),
   // Claude Code in headless mode (piped stdin) hangs without --dangerously-skip-permissions.
-  // Tool-level approval via WhatsApp buttons requires a different mechanism (Phase 2+).
+  // Tool-level approval via PreToolUse hooks replaces stdin-based flow (Phase 2).
   skipPermissions: z.boolean().default(true),
 });
 
+export const SessionsSchema = z.object({
+  maxConcurrent: z.number().int().min(1).max(20).default(5),
+  shellTimeout: z.number().int().min(1000).default(30_000),
+});
+
+/**
+ * Full JorchBot config schema.
+ *
+ * In jorchbot.json, `gateway` lives at the top-level (Layer 1 / OpenClaw),
+ * while the rest lives under the `jorchbot` key (Layer 2 / JorchBot-specific).
+ * The loader assembles both into this single schema transparently.
+ */
 export const JorchBotConfigSchema = z.object({
   gateway: GatewaySchema.default(GatewaySchema.parse({})),
   db: DbSchema.default(DbSchema.parse({})),
   channels: ChannelsSchema.default(ChannelsSchema.parse({})),
   tunnels: TunnelsSchema.default(TunnelsSchema.parse({})),
   approvals: ApprovalsSchema.default(ApprovalsSchema.parse({})),
+  sessions: SessionsSchema.default(SessionsSchema.parse({})),
 });
 
 export type JorchBotConfig = z.infer<typeof JorchBotConfigSchema>;
