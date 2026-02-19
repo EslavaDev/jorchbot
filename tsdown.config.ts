@@ -5,6 +5,7 @@ const env = {
 };
 
 export default defineConfig([
+  // Core entries — KEEP
   {
     entry: "src/index.ts",
     env,
@@ -44,16 +45,19 @@ export default defineConfig([
     fixedExtension: false,
     platform: "node",
   },
-  {
-    entry: "src/extensionAPI.ts",
-    env,
-    fixedExtension: false,
-    platform: "node",
-  },
-  {
-    entry: ["src/hooks/bundled/*/handler.ts", "src/hooks/llm-slug-generator.ts"],
-    env,
-    fixedExtension: false,
-    platform: "node",
-  },
+  // JorchBot: disabled entries (re-enable as needed)
+  // Extension API — disabled: extensions workspace excluded
+  // {
+  //   entry: "src/extensionAPI.ts",
+  //   env,
+  //   fixedExtension: false,
+  //   platform: "node",
+  // },
+  // Hooks — disabled: not needed in Phase 0
+  // {
+  //   entry: ["src/hooks/bundled/*/handler.ts", "src/hooks/llm-slug-generator.ts"],
+  //   env,
+  //   fixedExtension: false,
+  //   platform: "node",
+  // },
 ]);

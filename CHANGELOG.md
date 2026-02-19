@@ -1,8 +1,8 @@
-# Changelog
+# JorchBot Changelog
 
-Docs: https://docs.openclaw.ai
+## Unreleased
 
-## 2026.2.21 (Unreleased)
+- Initial fork from OpenClaw
 
 ### Changes
 

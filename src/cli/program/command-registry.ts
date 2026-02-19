@@ -40,6 +40,19 @@ const coreEntries: CoreCliEntry[] = [
   {
     commands: [
       {
+        name: "jb",
+        description: "JorchBot commands (start, stop, status, config, version)",
+        hasSubcommands: true,
+      },
+    ],
+    register: async ({ program }) => {
+      const mod = await import("./register.jorchbot.js");
+      mod.registerJorchBotCommands(program);
+    },
+  },
+  {
+    commands: [
+      {
         name: "setup",
         description: "Initialize local config and agent workspace",
         hasSubcommands: false,
@@ -192,7 +205,7 @@ const coreEntries: CoreCliEntry[] = [
     commands: [
       {
         name: "browser",
-        description: "Manage OpenClaw's dedicated browser (Chrome/Chromium)",
+        description: "Manage the dedicated browser (Chrome/Chromium)",
         hasSubcommands: true,
       },
     ],
