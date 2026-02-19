@@ -106,7 +106,9 @@
       "Bash(npx tsgo:*)",
       "WebFetch(domain:claude.com)",
       "Bash(find:*)",
-      "Bash(pnpm ui:build:*)"
+      "Bash(pnpm ui:build:*)",
+      "Bash(pnpm test:e2e:*)",
+      "Bash(sysctl:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

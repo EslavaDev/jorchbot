@@ -323,21 +323,29 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
 
       case "result": {
         if (event.usage) {
-          this.lastInputTokens =
+          const newInputTokens =
             event.usage.input_tokens +
             (event.usage.cache_creation_input_tokens ?? 0) +
             (event.usage.cache_read_input_tokens ?? 0);
-          this.lastOutputTokens = event.usage.output_tokens;
+          const newOutputTokens = event.usage.output_tokens;
+
+          // Context window only grows — never report a decrease across resumes.
+          // Each `claude --resume` invocation reports per-run usage, which can be
+          // smaller than the previous run if fewer agentic-loop iterations occurred.
+          const newTotal = newInputTokens + newOutputTokens;
+          const currentTotal = this.lastInputTokens + this.lastOutputTokens;
+
+          if (newTotal >= currentTotal) {
+            this.lastInputTokens = newInputTokens;
+            this.lastOutputTokens = newOutputTokens;
+          }
         }
 
         this.emit("result", {
           sessionId: event.session_id ?? this.sessionId ?? "",
           textContent: this.accumulatedText,
-          inputTokens:
-            (event.usage?.input_tokens ?? 0) +
-            (event.usage?.cache_creation_input_tokens ?? 0) +
-            (event.usage?.cache_read_input_tokens ?? 0),
-          outputTokens: event.usage?.output_tokens ?? 0,
+          inputTokens: this.lastInputTokens,
+          outputTokens: this.lastOutputTokens,
           costUsd: event.cost_usd ?? 0,
           durationMs: event.duration_ms ?? 0,
         });

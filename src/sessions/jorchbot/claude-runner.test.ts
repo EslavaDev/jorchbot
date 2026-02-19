@@ -312,6 +312,50 @@ describe("ClaudeRunner", () => {
     it("returns 0 when no tokens used", () => {
       expect(runner.getContextPercent()).toBe(0);
     });
+
+    it("never decreases across resumes (context only grows)", async () => {
+      const proc1 = createMockProcess();
+      mockSpawn.mockReturnValue(proc1 as never);
+
+      const startPromise = runner.start({ prompt: "init", cwd: "/tmp" });
+
+      feedLine(proc1, { type: "system", subtype: "init", session_id: "sess_ctx" });
+      // First run: 34K total tokens (e.g. multi-tool agentic loop)
+      feedLine(proc1, {
+        type: "result",
+        session_id: "sess_ctx",
+        usage: { input_tokens: 30_000, output_tokens: 4_000 },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      proc1.emit("exit", 0, null);
+      const result1 = await startPromise;
+
+      expect(result1.inputTokens).toBe(30_000);
+      expect(result1.outputTokens).toBe(4_000);
+      expect(runner.getContextPercent()).toBe(17); // 34K/200K
+
+      // Second run via resume: reports fewer tokens (e.g. single-turn reply)
+      const proc2 = createMockProcess();
+      mockSpawn.mockReturnValue(proc2 as never);
+
+      const resumePromise = runner.resume({ prompt: "continue", cwd: "/tmp" });
+
+      feedLine(proc2, {
+        type: "result",
+        session_id: "sess_ctx",
+        usage: { input_tokens: 29_000, output_tokens: 4_000 },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      proc2.emit("exit", 0, null);
+      const result2 = await resumePromise;
+
+      // Context % must NOT decrease — should keep the peak (34K, not 33K)
+      expect(result2.inputTokens).toBe(30_000);
+      expect(result2.outputTokens).toBe(4_000);
+      expect(runner.getContextPercent()).toBe(17); // Still 34K/200K, not 33K
+    });
   });
 
   describe("stop()", () => {
