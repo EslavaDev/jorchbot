@@ -88,8 +88,9 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       }
       const usage = calculateContextUsage(result.inputTokens, result.outputTokens);
       const contextLine = formatContextUsage(usage);
+      const sessionTag = result.sessionId ? ` [session: ${result.sessionId}]` : "";
       kapsoClient
-        .sendText({ to: currentSenderPhone, body: `Session complete. ${contextLine}` })
+        .sendText({ to: currentSenderPhone, body: `Session complete.${sessionTag} ${contextLine}` })
         .catch((err: unknown) => {
           console.error("[jorchbot] Failed to send result:", err);
         });
