@@ -62,7 +62,12 @@ function processKapsoEvent(event: KapsoEventPayload, deps: WebhookHandlerDeps): 
   return promises;
 }
 
-export function createWebhookHandlers(deps: WebhookHandlerDeps) {
+interface WebhookHandlers {
+  verify(req: Request, res: Response): void;
+  receive(req: Request, res: Response): Promise<void>;
+}
+
+export function createWebhookHandlers(deps: WebhookHandlerDeps): WebhookHandlers {
   return {
     /**
      * GET handler — Meta forward webhook verification.

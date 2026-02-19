@@ -2,13 +2,13 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { JorchBotDbInitError, JorchBotDbMigrationError } from "../errors/index.js";
 import { resolveDbPath } from "./paths.js";
 import * as schema from "./schema.js";
 
-let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
+let _db: BetterSQLite3Database<typeof schema> | null = null;
 let _sqlite: Database.Database | null = null;
 
 function resolveDbMigrationsPath(): string {
@@ -33,7 +33,7 @@ function resolveDbMigrationsPath(): string {
  * @throws {JorchBotDbInitError} If database creation fails
  * @throws {JorchBotDbMigrationError} If migration fails
  */
-export function getDb() {
+export function getDb(): BetterSQLite3Database<typeof schema> {
   if (_db) {
     return _db;
   }

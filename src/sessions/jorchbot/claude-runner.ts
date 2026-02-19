@@ -58,7 +58,7 @@ interface ClaudeRunnerEvents {
   error: [error: Error];
 }
 
-export type ClaudeRunnerStatus = "idle" | "running" | "waiting_approval" | "stopped" | "error";
+export type ClaudeRunnerStatus = "idle" | "running" | "stopped" | "error";
 
 const CLAUDE_BINARY = "claude";
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -137,24 +137,6 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
     ];
 
     return this.run(args, options.cwd, options.timeoutMs);
-  }
-
-  respondToApproval(approved: boolean): void {
-    if (!this.process?.stdin?.writable) {
-      throw new ClaudeRunnerProcessError(
-        "Cannot respond to approval: no active process or stdin not writable",
-      );
-    }
-
-    if (this.status !== "waiting_approval") {
-      throw new ClaudeRunnerProcessError(
-        `Cannot respond to approval: runner status is "${this.status}", expected "waiting_approval"`,
-      );
-    }
-
-    const response = approved ? "yes\n" : "no\n";
-    this.process.stdin.write(response);
-    this.status = "running";
   }
 
   async stop(): Promise<void> {
@@ -327,7 +309,8 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
           }
 
           if (block.type === "tool_use" && block.id && block.name) {
-            this.status = "waiting_approval";
+            // With --dangerously-skip-permissions, tools execute automatically.
+            // The toolUse event is informational (for logging/UI), not for approval.
             this.emit("toolUse", {
               toolUseId: block.id,
               toolName: block.name,

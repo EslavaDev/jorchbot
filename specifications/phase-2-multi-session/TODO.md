@@ -2,7 +2,7 @@
 
 > **Spec**: [SPEC.md](./SPEC.md)
 > **Status**: Pending
-> **Total tasks**: 48
+> **Total tasks**: 57
 
 Tasks are split into sequential sub-phases. Each sub-phase must be completed before the next begins.
 
@@ -238,25 +238,99 @@ Implement per-session message logging and the `/logs` query.
 
 ---
 
-## Sub-phase 2H: Multi-Session Approval Routing (3 tasks)
+## Sub-phase 2H: Tool Approval via Claude Code Hooks (12 tasks)
 
-Extend the approval system for multiple sessions.
+> **IMPORTANT (rev. 3 — 2026-02-19)**: The stdin-based approval flow (writing "yes"/"no" to Claude
+> Code's stdin) does NOT work. Claude Code hangs in headless mode with piped stdin.
+> `--dangerously-skip-permissions` is required for headless operation. Tool-level approval is
+> implemented via Claude Code's `PreToolUse` hooks instead. See SPEC section 2.6.
 
-- [ ] **2H.1** Update `ApprovalManager` in `src/sessions/jorchbot/approval-manager.ts`:
-  - Include `sessionId` in approval button payload
-  - Prefix background session buttons with project name: `[Yes backend] [No backend]`
-- [ ] **2H.2** Wire approval resolution in CommandRouter/gateway:
-  - Parse incoming button responses for `sessionId` + `approvalId`
-  - Route to `SessionManager.resolveApproval()`
-  - Handle shell approval (`shell_approve`/`shell_reject` types)
+Implement the hook-based tool approval system that replaces the old stdin-based approach.
+
+### Hook scripts
+
+- [ ] **2H.1** Create `src/hooks/tool-approval.ts` — PreToolUse hook script:
+  - Read tool invocation JSON from stdin (`tool_name`, `tool_input`)
+  - POST to `http://localhost:{port}/api/tool-approval` with `{ sessionId, toolName, toolInput }`
+  - Poll `GET /api/tool-approval/:id` until status is `"approved"` or `"denied"` (500ms interval)
+  - On approval: exit with JSON `{ "hookSpecificOutput": { "permissionDecision": "allow" } }`
+  - On denial: exit with JSON `{ "hookSpecificOutput": { "permissionDecision": "deny", "permissionDecisionReason": "..." } }`
+  - On timeout (no response from gateway): exit with code 1 (non-blocking error)
+  - Read gateway port from `JORCHBOT_GATEWAY_PORT` env var (default: 18789)
+- [ ] **2H.2** Create `src/hooks/tool-result.ts` — PostToolUse + PostToolUseFailure hook script:
+  - Read tool result JSON from stdin (`tool_name`, `tool_input`, `tool_output` or `tool_error`)
+  - POST to `http://localhost:{port}/api/tool-result` with `{ sessionId, toolName, summary, success }`
+  - Fire-and-forget (async hook, non-blocking)
+  - Format a brief result summary (e.g., "Edited src/main.ts (1 change)" or "Bash: 42 tests passed")
+  - For `PostToolUseFailure`: include error in summary (e.g., "Bash failed: permission denied")
+  - Same script handles both events — detects failure via presence of `tool_error` field
+
+### Gateway approval API
+
+- [ ] **2H.3** Create `src/gateway/approval-api.ts` — Express router with 3 endpoints:
+  - `POST /api/tool-approval` — Receives approval request from hook script. Generates unique approval ID. Sends WhatsApp buttons via Kapso. Returns `{ id: "approval_xxx" }`.
+  - `GET /api/tool-approval/:id` — Hook polls this. Returns `{ status: "pending" | "approved" | "denied", reason?: string }`.
+  - `POST /api/tool-result` — Receives tool result from PostToolUse hook. Sends result summary to WhatsApp.
+- [ ] **2H.4** Rewrite `src/sessions/jorchbot/approval-manager.ts`:
+  - Store pending approvals in `Map<string, PendingApproval>` (approval ID → {sessionId, toolName, toolInput, status, resolve})
+  - `requestApproval(sessionId, toolName, toolInput)` — creates pending entry, sends WhatsApp buttons
+  - `resolveApproval(approvalId, approved, reason?)` — updates status, resolves pending promise
+  - `getApprovalStatus(approvalId)` — returns current status (used by poll endpoint)
+  - Include `sessionId` in approval button payload for multi-session routing
+  - Prefix background session buttons with project name: `[backend] 🔧 Edit: src/api/...`
   - Do NOT change focused session when resolving background approvals
-- [ ] **2H.3** Write tests:
-  - Background approval buttons include project name
-  - Resolving background approval doesn't change focus
-  - Shell approval executes command after approval
-  - 3 tests total
 
-**Acceptance**: Background session approvals work without switching focus. Shell dangerous commands can be approved/rejected.
+### Hook configuration
+
+- [ ] **2H.5** Create `src/hooks/hook-config-generator.ts`:
+  - Function: `generateHookConfig(options: { gatewayPort: number, hookScriptPath: string, matcher?: string })`
+  - Returns the `.claude/settings.local.json` content with `PreToolUse` + `PostToolUse` + `PostToolUseFailure` hooks
+  - Default matcher: `"Bash|Write|Edit|NotebookEdit"` (write/modify tools only)
+  - `PostToolUseFailure` uses the same hook script as `PostToolUse` (detects failure via `tool_error` field)
+  - Read-only tools (`Read`, `Glob`, `Grep`, `WebSearch`, `WebFetch`) pass without approval
+  - Called by SessionManager when creating a new session (writes to workspace `.claude/settings.local.json`)
+  - See SPEC section 2.6.8 for reference of all 14 Claude Code hook events and JorchBot usage plan
+- [ ] **2H.6** Wire hook config generation in SessionManager `create()`:
+  - After creating ClaudeRunner, generate hook config in workspace directory
+  - Pass the absolute path to the built hook scripts (`dist/hooks/tool-approval.js`, `dist/hooks/tool-result.js`)
+
+### WhatsApp UX
+
+- [ ] **2H.7** Format tool approval messages for WhatsApp:
+  - `Edit` → show diff (old_string → new_string), file path
+  - `Bash` → show command, optional description
+  - `Write` → show file path, brief content summary
+  - Keep within WhatsApp 4096 char limit (truncate if needed)
+  - Buttons: `[Approve ✅]` `[Reject ❌]`
+- [ ] **2H.8** Wire incoming Kapso button responses to `ApprovalManager.resolveApproval()`:
+  - Parse button payload for `approvalId` + `sessionId`
+  - Route to correct session's approval
+  - Send confirmation to chat after resolution
+
+### Shell dangerous command approvals
+
+- [ ] **2H.9** Wire shell dangerous command approval (same UX as tool approval):
+  - `ShellRunner.checkDangerous()` → send approval buttons
+  - Parse `shell_approve` / `shell_reject` button responses
+  - Execute command after approval, drop after rejection
+
+### Tests
+
+- [ ] **2H.10** Write `src/hooks/tool-approval.test.ts`:
+  - Hook reads stdin JSON correctly
+  - Hook calls gateway API with correct payload
+  - Hook returns allow/deny JSON based on poll response
+  - Hook handles timeout gracefully
+  - 5+ tests
+- [ ] **2H.11** Write `src/gateway/approval-api.test.ts`:
+  - POST creates pending approval, returns ID
+  - GET returns pending/approved/denied status
+  - POST tool-result sends notification
+  - Multi-session routing: correct session receives approval
+  - 5+ tests
+- [ ] **2H.12** Run: `pnpm test:fast` — all new + existing tests pass, `pnpm check` clean
+
+**Acceptance**: User taps [Approve]/[Reject] on WhatsApp for each write/modify tool. Claude Code proceeds or adjusts based on decision. Background session approvals work without switching focus. Shell dangerous commands use the same approval UX.
 
 ---
 
@@ -327,9 +401,11 @@ Full integration verification.
 
 ```
 2A (Errors) ──┐
-              ├──→ 2B (Config) ──→ 2C (FocusModel) ──→ 2E (SessionManager) ──→ 2F (CommandRouter) ──→ 2G (Logging) ──→ 2H (Approvals) ──→ 2I (Gateway) ──→ 2J (Agent Config) ──→ 2K (Final)
-              │                                                                          ↑
-              └──→ 2D (ShellRunner) ─────────────────────────────────────────────────────┘
+              ├──→ 2B (Config) ──→ 2C (FocusModel) ──→ 2E (SessionManager) ──→ 2F (CommandRouter) ──→ 2G (Logging) ──┐
+              │                                                                          ↑                            │
+              └──→ 2D (ShellRunner) ─────────────────────────────────────────────────────┘                            │
+                                                                                                                      ▼
+                                                                                              2H (Hooks/Approvals) ──→ 2I (Gateway) ──→ 2J (Agent Config) ──→ 2K (Final)
 ```
 
 - **2A** is a prerequisite for everything
@@ -337,5 +413,7 @@ Full integration verification.
 - **2C** (FocusModel) and **2D** (ShellRunner) are independent of each other
 - **2E** (SessionManager) depends on 2C (uses FocusModel)
 - **2F** (CommandRouter) depends on 2D + 2E (uses both ShellRunner and SessionManager)
-- **2G–2J** are sequential refinements
+- **2G** (Logging) follows CommandRouter
+- **2H** (Hooks/Approvals) depends on 2G (hook scripts use gateway API which needs logging)
+- **2I–2J** are sequential refinements after hooks are ready
 - **2K** is always last

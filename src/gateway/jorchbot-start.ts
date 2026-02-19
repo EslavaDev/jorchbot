@@ -35,7 +35,6 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     let currentSenderPhone: string | null = null;
 
     const approvalManager = new ApprovalManager({
-      claudeRunner,
       sessionId: "default",
       sendButtons: async (text, buttons) => {
         if (!currentSenderPhone) {

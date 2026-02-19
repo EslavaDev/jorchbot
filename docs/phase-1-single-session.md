@@ -1,6 +1,6 @@
 # Fase 1 - Canal WhatsApp + Sesion Unica
 
-> **Estado**: Pendiente
+> **Estado**: En progreso (Kapso plugin implementado, ClaudeRunner implementado, router basico implementado, DM pairing conectado)
 > **Dependencia**: Fase 0
 > **Entregable**: Hablar con UNA instancia de Claude Code desde WhatsApp via Kapso.ai
 > **Al terminar**: Puedes enviar un mensaje por WP, Claude Code lo procesa, recibes respuesta
@@ -113,77 +113,97 @@ export class KapsoChannelPlugin {
 ### 1.2 Claude Code Runner
 
 - [ ] Crear `src/sessions/claude-runner.ts`
-- [ ] Ejecutar `claude -p <prompt> --output-format stream-json`
+- [ ] Ejecutar `claude -p <prompt> --output-format stream-json --dangerously-skip-permissions`
 - [ ] Parsear NDJSON streaming
 - [ ] Capturar session_id para resume
 - [ ] Implementar resume: `claude -p <prompt> --resume <session_id>`
-- [ ] Capturar tool approval requests del stream
-- [ ] Enviar approval/rejection de vuelta al proceso
 - [ ] Calcular context window % desde metadata de respuesta
 - [ ] Manejar errores y timeouts del proceso
+- [ ] Inyectar system prompt via `--append-system-prompt` (modo PLAN como interino)
 - [ ] Tests unitarios
+
+> **NOTA (rev. 3 — 2026-02-19)**: Claude Code headless (`-p`) con stdin piped se cuelga
+> antes de emitir eventos. Se requiere `--dangerously-skip-permissions` + `stdin: "ignore"`.
+> La aprobacion a nivel de herramienta via stdin NO funciona. En fase 1, se usa un
+> `PLAN_MODE_PROMPT` (system prompt) como interino: Claude describe su plan y espera
+> confirmacion conversacional del usuario. En fase 2, se reemplaza con aprobacion real
+> via hooks `PreToolUse` de Claude Code.
 
 **Detalle del streaming**:
 
 ```typescript
-// src/sessions/claude-runner.ts
-export class ClaudeRunner {
+// src/sessions/jorchbot/claude-runner.ts
+export class ClaudeRunner extends EventEmitter {
   private process: ChildProcess | null = null;
   private sessionId: string | null = null;
 
-  // Iniciar nueva sesion
+  // Iniciar nueva sesion (con --dangerously-skip-permissions + stdin: "ignore")
   async start(options: {
     prompt: string;
     cwd: string;
-    systemPrompt?: string;
-    allowedTools?: string[];
+    systemPrompt?: string; // Inyectado via --append-system-prompt
+    skipPermissions?: boolean; // Default: true (requerido para headless)
   }): Promise<ClaudeResponse>;
 
-  // Continuar sesion existente
-  async resume(prompt: string): Promise<ClaudeResponse>;
-
-  // Responder a aprobacion pendiente
-  async respondToApproval(approved: boolean, feedback?: string): Promise<void>;
+  // Continuar sesion existente (--resume <sessionId>)
+  async resume(options: { prompt: string; cwd: string }): Promise<ClaudeResponse>;
 
   // Obtener context %
   getContextPercent(): number;
 
+  // Obtener session ID para resume
+  getSessionId(): string | null;
+
   // Detener sesion
   async stop(): Promise<void>;
+
+  // Eventos emitidos:
+  // "text" — texto de Claude (va a WhatsApp)
+  // "toolUse" — Claude invoca herramienta (informativo, aprobacion via hooks en fase 2)
+  // "result" — respuesta completada
+  // "error" — error del proceso
 }
 ```
+
+> **NOTA**: No hay metodo `respondToApproval()`. La aprobacion via stdin no funciona
+> en modo headless. Fase 1 usa system prompt conversacional. Fase 2 usa hooks `PreToolUse`.
 
 **Criterio de aceptacion**: Ejecutar Claude Code headless, obtener respuesta, hacer resume.
 
-### 1.3 Flujo de aprobacion basico (Yes / No)
+### 1.3 Flujo de aprobacion (interino via system prompt)
 
-- [ ] Detectar cuando Claude Code pide aprobacion (del stream JSON)
-- [ ] Enviar mensaje WP con botones: `[Yes] [No]`
-- [ ] Recibir respuesta del boton via webhook
-- [ ] Mapear button_id a la accion pendiente
-- [ ] Enviar aprobacion/rechazo al proceso de Claude Code
-- [ ] Timeout: re-enviar recordatorio a los 10 min
+> **NOTA (rev. 3 — 2026-02-19)**: La aprobacion a nivel de herramienta via stdin NO funciona
+> en modo headless. Fase 1 usa un enfoque interino basado en **system prompt** (`PLAN_MODE_PROMPT`):
+> Claude describe su plan y espera confirmacion conversacional del usuario.
+> Fase 2 reemplaza esto con aprobacion real via hooks `PreToolUse`.
 
-**Estructura del approval**:
+**Fase 1 (interino) — aprobacion conversacional**:
 
-```typescript
-// Cuando Claude pide aprobacion, el stream emite:
-{
-  type: "tool_use_request",
-  tool: "Bash",
-  input: "npm install react-hook-form",
-  request_id: "req_abc123"
-}
+- [ ] Inyectar `PLAN_MODE_PROMPT` via `--append-system-prompt` al iniciar ClaudeRunner
+- [ ] El prompt instruye a Claude a: investigar primero, presentar plan, esperar "dale"/"go"/"si"
+- [ ] Si el usuario dice "no"/"para"/"cancel", Claude no ejecuta
+- [ ] No hay aprobacion a nivel de herramienta individual (eso es fase 2)
 
-// JorchBot envia a WP:
-// "[session] Claude quiere ejecutar:
-//  > Bash: npm install react-hook-form
-//  [Yes] [No]"
+```
+User: fix the login bug
+Claude: I'll need to:
+  - Read src/auth/login.ts
+  - Edit the token validation
+  - Run tests
 
-// Boton metadata: { sessionId: "s1", requestId: "req_abc123", action: "approve" }
+  Ready to execute? (yes/no)
+
+User: dale
+Claude: (executes the plan)
 ```
 
-**Criterio de aceptacion**: Claude pide aprobacion, recibes botones en WP, tocas Yes, Claude continua.
+**Fase 2 (definitivo) — aprobacion via hooks**:
+
+En fase 2, cada tool use individual (Edit, Bash, Write) se aprueba via hooks `PreToolUse`
+que envian botones WhatsApp [Approve] [Reject]. Ver `docs/phase-2-multi-session.md` seccion 2.7.
+
+**Criterio de aceptacion (fase 1)**: Claude presenta plan conversacional antes de ejecutar.
+Usuario confirma con texto libre. No hay botones de aprobacion individual (eso es fase 2).
 
 ### 1.4 Command Router basico
 
@@ -249,8 +269,9 @@ export class CommandRouter {
 
 - Solo 1 sesion de Claude Code (multi-sesion en fase 2)
 - Sin shell directo (fase 2)
+- Sin aprobacion a nivel de herramienta individual — solo conversacional via system prompt (fase 2 agrega hooks `PreToolUse`)
 - Sin Jorchfile (fase 3)
 - Sin tunnels automaticos (fase 4)
 - Sin "Yes + feedback" (fase 5)
-- Sin modos plan/auto/silent (fase 5)
+- Sin modos plan/auto/silent configurables por comando (fase 5) — solo `PLAN_MODE_PROMPT` como default
 - Webhook requiere setup manual (fase 4 lo automatiza con Tailscale)

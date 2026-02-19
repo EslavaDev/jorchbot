@@ -129,14 +129,199 @@ Convenience commands that map to shell executions:
 | `/logs <project> [n]`   | Show last N messages (default: 20)                      |
 | `/compact <project>`    | Compact Claude Code context (re-start with summary)     |
 
-### 2.6 Multi-Session Approval Routing
+### 2.6 Tool Approval via Claude Code Hooks
 
-Extends Phase 1's approval system for multiple sessions:
+> **IMPORTANT (rev. 3 — 2026-02-19)**: The Phase 1 approach of writing "yes"/"no" to Claude Code's
+> stdin does NOT work. Claude Code hangs in headless mode (piped stdin) before emitting any events.
+> `--dangerously-skip-permissions` is required for headless operation.
+>
+> This section replaces the stdin-based approval flow with **Claude Code's `PreToolUse` hooks**,
+> which provide real tool-level approval while working with `--dangerously-skip-permissions`.
 
-- Every approval button carries `sessionId` + `approvalId` in its payload
-- Background session buttons include the project name: `[Yes backend] [No backend]`
+#### 2.6.1 Architecture: PreToolUse Hook → WhatsApp Approval
+
+Claude Code supports **hooks** — shell commands that execute before/after tool calls. A synchronous
+`PreToolUse` hook **blocks Claude Code** until the hook process exits (up to 10 min configurable timeout).
+
+**Flow**:
+
+```
+Claude Code (--dangerously-skip-permissions)
+    │
+    ▼ wants to use Edit on src/main.ts
+PreToolUse hook fires
+    │
+    ▼ hook receives JSON on stdin:
+    { "tool_name": "Edit", "tool_input": { "file_path": "src/main.ts", "old_string": "...", "new_string": "..." } }
+    │
+    ▼ hook script calls JorchBot gateway API:
+    POST http://localhost:18789/api/tool-approval
+    │
+    ▼ gateway sends WhatsApp message via Kapso:
+    "🔧 Edit: src/main.ts
+     - const port = 3000;
+     + const port = process.env.PORT ?? 3000;
+     [Approve] [Reject] [Detail]"
+    │
+    ▼ hook blocks, polling gateway for approval decision
+    │
+    ▼ user taps [Approve] on WhatsApp
+    │
+    ▼ gateway stores decision
+    │
+    ▼ hook receives approval, exits with JSON:
+    { "hookSpecificOutput": { "permissionDecision": "allow", "additionalContext": "Approved by user via WhatsApp" } }
+    │
+    ▼ Claude Code executes the Edit tool
+```
+
+#### 2.6.2 Hook Decisions (not just yes/no)
+
+The `PreToolUse` hook can return rich decisions:
+
+| Decision                   | Meaning                          | Use case                          |
+| -------------------------- | -------------------------------- | --------------------------------- |
+| `"allow"`                  | Execute the tool                 | User tapped Approve               |
+| `"deny"` + reason          | Block tool, tell Claude why      | User tapped Reject                |
+| `"allow"` + `updatedInput` | Execute with modified parameters | User approved but changed command |
+| Exit code 2 + stderr       | Hard block with error message    | Security policy violation         |
+
+The `additionalContext` field injects text into Claude's context after the decision. The `permissionDecisionReason` on deny tells Claude WHY the tool was blocked, so it can adjust.
+
+#### 2.6.3 Hook Configuration
+
+Generated at session creation time in `.claude/settings.local.json` of the workspace:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /path/to/jorchbot/dist/hooks/tool-approval.js",
+            "timeout": 600,
+            "statusMessage": "Waiting for WhatsApp approval..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /path/to/jorchbot/dist/hooks/tool-result.js",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /path/to/jorchbot/dist/hooks/tool-result.js",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Read-only tools (`Read`, `Glob`, `Grep`, `WebSearch`) pass without approval. Only tools that modify state require approval.
+
+> **Note**: `PostToolUseFailure` uses the same hook script as `PostToolUse`. The hook script receives `tool_error`
+> in its stdin JSON, which it includes in the result summary sent to WhatsApp (e.g., "Bash failed: permission denied").
+
+#### 2.6.4 Tool Approval Gateway Endpoints
+
+New endpoints on the JorchBot gateway:
+
+- `POST /api/tool-approval` — Hook calls this to request approval. Gateway sends WhatsApp buttons. Returns approval ID.
+- `GET /api/tool-approval/:id` — Hook polls this for the decision. Returns `{ "status": "pending" | "approved" | "denied", "reason": "..." }`.
+- `POST /api/tool-result` — PostToolUse hook calls this to report tool output. Gateway sends result summary to WhatsApp.
+
+#### 2.6.5 WhatsApp UX for Tool Approval
+
+The user sees the full context of what Claude wants to do:
+
+```
+🔧 Edit: src/auth/login.ts
+
+- if (token) { return true; }
++ if (token && !isExpired(token)) { return true; }
+
+[Approve ✅] [Reject ❌]
+```
+
+```
+⚡ Bash: pnpm test -- src/auth/
+> Run test suite for auth module
+
+[Approve ✅] [Reject ❌]
+```
+
+For `PostToolUse`, the user gets result summaries (async, non-blocking):
+
+```
+✅ Edited src/auth/login.ts (1 change)
+✅ Bash: 42 tests passed, 0 failed (3.2s)
+```
+
+#### 2.6.6 Multi-Session Approval Routing
+
+With hooks, each session has its own hook configuration pointing to the same gateway. Multi-session routing:
+
+- Every approval request carries `sessionId` in the gateway API call
+- Background session messages include the project name: `[backend] 🔧 Edit: src/api/...`
 - Responding to a background approval does NOT change the focused session
-- ApprovalManager becomes per-session (each session has its own instance)
+- ApprovalManager tracks pending approvals per session and resolves via the polling endpoint
+
+#### 2.6.7 Timeout and Auto-Deny
+
+If the user doesn't respond within the configured timeout (default: 10 minutes):
+
+- The hook process is killed by Claude Code
+- Claude receives a non-blocking error
+- Claude can retry or ask the user what to do
+- JorchBot sends a notification: "Tool approval timed out for [project]"
+
+#### 2.6.8 Claude Code Hook Event Reference
+
+Claude Code supports 14 hook event types. JorchBot uses a subset; the rest are documented here for future phases:
+
+| Hook Event           | JorchBot Usage                                        | Phase   |
+| -------------------- | ----------------------------------------------------- | ------- |
+| `PreToolUse`         | **Tool approval** — blocks until WhatsApp approve     | Phase 2 |
+| `PostToolUse`        | **Result reporting** — sends summary to chat          | Phase 2 |
+| `PostToolUseFailure` | **Error reporting** — sends failure to chat           | Phase 2 |
+| `Notification`       | Future: detect `idle_prompt` (Claude waiting)         | Phase 5 |
+| `Stop`               | Future: detect questions via `last_assistant_message` | Phase 5 |
+| `PreCompact`         | Future: notify user before auto-compaction            | Phase 5 |
+| `SessionStart`       | Not needed (ClaudeRunner tracks lifecycle)            | —       |
+| `SessionEnd`         | Not needed (ClaudeRunner tracks lifecycle)            | —       |
+| `UserPromptSubmit`   | Not needed (JorchBot controls prompt injection)       | —       |
+| `PermissionRequest`  | Does NOT fire in headless mode (`-p`)                 | —       |
+| `SubagentStart`      | Not relevant (Claude's internal sub-agents)           | —       |
+| `SubagentStop`       | Not relevant (Claude's internal sub-agents)           | —       |
+| `TeammateIdle`       | Not relevant (multi-agent Claude feature)             | —       |
+| `TaskCompleted`      | Not relevant (multi-agent Claude feature)             | —       |
+
+**Key architectural note**: When Claude Code asks clarifying questions (assumptions, needs more context, etc.),
+there is NO dedicated hook event. Questions flow as regular text output through `ClaudeRunner.on("text")`, which
+the gateway forwards to WhatsApp naturally. The `Stop` hook (available in future phases) could optionally detect
+questions by inspecting `last_assistant_message`, but this is not required for the core flow.
+
+**Important**: `PermissionRequest` hooks do NOT fire when using `--dangerously-skip-permissions` (required for
+headless mode). Only `PreToolUse` hooks provide tool-level access control in headless mode.
 
 ### 2.7 Message Logging
 
@@ -550,11 +735,13 @@ export class SessionManager {
       }
     });
 
+    // NOTE: With --dangerously-skip-permissions + PreToolUse hooks (section 2.6),
+    // tool approval is handled externally by the hook script → gateway HTTP API flow.
+    // The "toolUse" event here is for informational logging only.
+    // Actual approval buttons are sent by the gateway when the hook script calls
+    // POST /api/tool-approval. See sub-phase 2H for implementation details.
     runner.on("toolUse", (request) => {
-      const session = this.active.get(project);
-      if (session) {
-        void session.approval.requestApproval(request);
-      }
+      this.logMessage(sessionId, "system", "approval", `Tool: ${request.toolName}`);
     });
 
     runner.on("result", (result) => {
@@ -1860,27 +2047,33 @@ describe("CommandRouter (Phase 2)", () => {
 
 ### 7.1 New files
 
-| File                                         | Purpose                               | Est. LOC |
-| -------------------------------------------- | ------------------------------------- | -------- |
-| `src/sessions/jorchbot/manager.ts`           | SessionManager (replaces placeholder) | ~350     |
-| `src/sessions/jorchbot/manager.test.ts`      | SessionManager tests                  | ~300     |
-| `src/sessions/jorchbot/focus-model.ts`       | FocusModel (replaces placeholder)     | ~40      |
-| `src/sessions/jorchbot/focus-model.test.ts`  | FocusModel tests                      | ~50      |
-| `src/sessions/jorchbot/shell-runner.ts`      | ShellRunner (replaces placeholder)    | ~120     |
-| `src/sessions/jorchbot/shell-runner.test.ts` | ShellRunner tests                     | ~120     |
+| File                                         | Purpose                                                               | Est. LOC |
+| -------------------------------------------- | --------------------------------------------------------------------- | -------- |
+| `src/sessions/jorchbot/manager.ts`           | SessionManager (replaces placeholder)                                 | ~350     |
+| `src/sessions/jorchbot/manager.test.ts`      | SessionManager tests                                                  | ~300     |
+| `src/sessions/jorchbot/focus-model.ts`       | FocusModel (replaces placeholder)                                     | ~40      |
+| `src/sessions/jorchbot/focus-model.test.ts`  | FocusModel tests                                                      | ~50      |
+| `src/sessions/jorchbot/shell-runner.ts`      | ShellRunner (replaces placeholder)                                    | ~120     |
+| `src/sessions/jorchbot/shell-runner.test.ts` | ShellRunner tests                                                     | ~120     |
+| `src/hooks/tool-approval.ts`                 | PreToolUse hook script (calls gateway API)                            | ~80      |
+| `src/hooks/tool-result.ts`                   | PostToolUse + PostToolUseFailure hook script (reports results/errors) | ~50      |
+| `src/hooks/hook-config-generator.ts`         | Generates `.claude/settings.local.json` for hooks                     | ~60      |
+| `src/hooks/tool-approval.test.ts`            | Hook script tests                                                     | ~80      |
+| `src/gateway/approval-api.ts`                | Gateway HTTP endpoints for tool approval                              | ~100     |
+| `src/gateway/approval-api.test.ts`           | Approval API tests                                                    | ~80      |
 
 ### 7.2 Modified files
 
-| File                                        | Change                                                                    |
-| ------------------------------------------- | ------------------------------------------------------------------------- |
-| `src/errors/index.ts`                       | Add 7 new error classes (Session + Shell)                                 |
-| `src/config/jorchbot-config.ts`             | Remove `gateway` schema (Layer 1 owns it), add `sessions` schema          |
-| `src/config/jorchbot-config-loader.ts`      | Read from `jorchbot` key in `jorchbot.json` (JSON5), remove `config.json` |
-| `src/config/jorchbot-config.test.ts`        | Update tests for consolidated config + new sessions schema                |
-| `src/commands/router.ts`                    | Extend with multi-session commands, shell routing                         |
-| `src/commands/router.test.ts`               | Extend with Phase 2 tests                                                 |
-| `src/sessions/jorchbot/approval-manager.ts` | Minor: prefix messages with project name                                  |
-| `src/gateway/jorchbot-start.ts`             | Wire SessionManager + ShellRunner + restore                               |
+| File                                        | Change                                                                       |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| `src/errors/index.ts`                       | Add 7 new error classes (Session + Shell)                                    |
+| `src/config/jorchbot-config.ts`             | Remove `gateway` schema (Layer 1 owns it), add `sessions` schema             |
+| `src/config/jorchbot-config-loader.ts`      | Read from `jorchbot` key in `jorchbot.json` (JSON5), remove `config.json`    |
+| `src/config/jorchbot-config.test.ts`        | Update tests for consolidated config + new sessions schema                   |
+| `src/commands/router.ts`                    | Extend with multi-session commands, shell routing                            |
+| `src/commands/router.test.ts`               | Extend with Phase 2 tests                                                    |
+| `src/sessions/jorchbot/approval-manager.ts` | Rewrite: HTTP-based approval (gateway API) instead of stdin; per-session IDs |
+| `src/gateway/jorchbot-start.ts`             | Wire SessionManager + ShellRunner + approval API + restore                   |
 
 ---
 
@@ -1916,13 +2109,20 @@ describe("CommandRouter (Phase 2)", () => {
 | ---------------------------------------------------------------- | ---------------------- |
 | No Jorchfile (manual /new with path)                             | Phase 3                |
 | No automatic tunnels                                             | Phase 4                |
-| No "Yes + feedback" approvals                                    | Phase 5                |
+| No "Yes + feedback" approvals (user can only allow/deny)         | Phase 5                |
 | No plan/auto/silent modes                                        | Phase 5                |
 | No Kapso lists (buttons only)                                    | Phase 5                |
 | No /replay, /history commands                                    | Phase 5                |
 | No Telegram                                                      | Phase 7                |
 | No media support in shell output                                 | Later phase            |
 | Agent registration is write-only (no config reload notification) | Phase 6                |
+
+> **Note on tool approval**: Phase 1 uses a `REMOTE_SYSTEM_PROMPT` as an interim solution — it
+> instructs Claude to describe its plan and wait for user confirmation before executing actions.
+> This is conversational, not tool-level. Phase 2 replaces this with real tool-level approval via
+> `PreToolUse` hooks (section 2.6), where each write/modify tool invocation is blocked until the
+> user approves or rejects via WhatsApp buttons. The `--dangerously-skip-permissions` flag remains
+> required for headless operation; the hooks provide the actual access control.
 
 ---
 
@@ -1937,8 +2137,9 @@ describe("CommandRouter (Phase 2)", () => {
 5. **SessionManager** — the core orchestrator (depends on FocusModel)
 6. **CommandRouter extensions** — wire everything together
 7. **Message logging** — DB queries for /logs
-8. **Gateway integration** — wire SessionManager into jorchbot-start.ts
-9. **Agent config registration** — write/remove from jorchbot.json
+8. **Tool approval hooks** — hook scripts, gateway API endpoints, hook config generator (see section 2.6)
+9. **Gateway integration** — wire SessionManager into jorchbot-start.ts
+10. **Agent config registration** — write/remove from jorchbot.json
 
 ### 10.2 Implementation risks
 
@@ -1949,3 +2150,6 @@ describe("CommandRouter (Phase 2)", () => {
 | Shell command injection via $ prefix                               | Only execute in workspace dir, never with shell expansion of user vars |
 | Race conditions in focus switching during background notifications | FocusModel is synchronous, single-threaded Node.js                     |
 | DB migration needed for sessions config schema change              | No migration needed — config schema is additive with defaults          |
+| PreToolUse hook timeout kills Claude Code process                  | Configure generous timeout (10 min), auto-deny with notification       |
+| Hook script crashes leave Claude Code blocked                      | Hook exit code 1 = non-blocking error; Claude retries or asks user     |
+| Multiple sessions trigger concurrent approval requests             | Each approval gets unique ID; gateway tracks per-session pending list  |

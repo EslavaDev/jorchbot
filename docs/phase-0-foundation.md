@@ -1,9 +1,8 @@
 # Fase 0 - Fundacion
 
-> **Estado**: Pendiente
+> **Estado**: Casi completo (sub-fases 0A-0H terminadas, pendientes: 0I.2 push CI, 0J verificacion final)
 > **Dependencia**: Ninguna
 > **Entregable**: Fork limpio de OpenClaw con DB, estructura de proyecto, y CI basico
-> **Estimacion de esfuerzo**: El scope esta definido, la complejidad esta en entender el codebase de OpenClaw
 
 ---
 
@@ -169,7 +168,7 @@ jorchbot/
 │   │   └── manager.ts        # Fase 1: Approval flow (Yes/No/Feedback)
 │   ├── messages/
 │   │   └── chunker.ts        # Fase 5: Message splitting/chunking
-│   ├── gui/                  # Fase 6: Extender Control UI existente (puerto 18791)
+│   ├── gui/                  # Fase 6: Extender Control UI existente (puerto 18789)
 │   ├── db/
 │   │   ├── index.ts          # DB connection singleton
 │   │   ├── schema.ts         # Drizzle schema
@@ -289,5 +288,6 @@ jorchbot/
 - La DB se crea con migraciones automaticas al iniciar. No requiere setup manual.
 - El Gateway debe arrancar aunque no haya canales configurados (modo "headless").
 - **Estrategia rev. 2**: Extender OpenClaw, no reconstruir. Reusar multi-agente, sessions, DM pairing, tool policies. Solo ClaudeRunner y Focus Model son componentes nuevos de runtime.
-- **Dos SQLite coexisten**: OpenClaw memory (`~/.openclaw/memory/`) + JorchBot metadata (`~/.jorchbot/jorchbot.db`).
-- **Config**: JorchBot usa JSON (`~/.jorchbot/config.json`), OpenClaw usa JSON5 (`~/.openclaw/openclaw.json`). Ambos coexisten.
+- **Dos SQLite coexisten**: OpenClaw memory (`~/.jorchbot/memory/`) + JorchBot metadata (`~/.jorchbot/jorchbot.db`).
+- **Config**: JorchBot usa JSON (`~/.jorchbot/config.json`) para config Layer 2, Gateway usa JSON5 (`~/.jorchbot/jorchbot.json`) para config Layer 1. En fase 2 se consolidan en un solo archivo.
+- **State dir renombrado**: `~/.openclaw/` → `~/.jorchbot/` (definido en `src/config/paths.ts`: `NEW_STATE_DIRNAME = ".jorchbot"`).

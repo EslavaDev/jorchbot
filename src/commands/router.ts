@@ -1,4 +1,5 @@
 import type { ClaudeRunner } from "../sessions/jorchbot/claude-runner.js";
+import { PLAN_MODE_PROMPT } from "./system-prompts.js";
 
 export interface IncomingMessage {
   text: string;
@@ -147,6 +148,7 @@ export class CommandRouter {
           prompt: text,
           cwd: process.cwd(),
           skipPermissions: this.deps.skipPermissions,
+          systemPrompt: PLAN_MODE_PROMPT,
         });
       }
     } catch (err: unknown) {

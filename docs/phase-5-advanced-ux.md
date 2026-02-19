@@ -9,13 +9,18 @@
 
 ## Nota Arquitectural (rev. 2 — DeepWiki)
 
-> **Sistemas existentes en OpenClaw que esta fase conecta a Kapso**:
+> **Sistemas existentes que esta fase extiende**:
 >
 > - **Auto-compaction**: Ya existe via `sessions.compact` RPC. Solo conectar al comando `/compact` y alertas de context %.
-> - **Tool approval**: Ya existe via `exec.ask` modes (`"off"`, `"on-miss"`, `"always"`). Los modos `confirm/plan/auto` de JorchBot mapean a estas configuraciones.
+> - **Tool approval via hooks**: Fase 2 implementa `PreToolUse`/`PostToolUse`/`PostToolUseFailure` hooks para aprobacion a nivel de herramienta. Fase 5 agrega: "Yes + feedback" (inyecta `additionalContext`), aprobacion parcial, y listas interactivas.
 > - **Message chunking**: OpenClaw ya tiene `textLimit` por canal (4096 default). El chunking basico se hereda del Plugin SDK.
+> - **System prompts**: Fase 1 define `PLAN_MODE_PROMPT`, `CONFIRM_MODE_PROMPT`, `AUTO_MODE_PROMPT` en `src/commands/system-prompts.ts`. Fase 5 conecta el comando `/mode` para seleccionar entre ellos.
 >
-> **Lo nuevo de esta fase**: Smart chunking avanzado (split por bloques de codigo, truncate + document), botones de Kapso para aprobaciones (Yes/Yes+feedback/No), listas interactivas, y el flujo de feedback.
+> **Lo nuevo de esta fase**: Smart chunking avanzado (split por bloques de codigo, truncate + document), "Yes + feedback" con `additionalContext` en hooks, listas interactivas, flujo de feedback, y modos configurables por comando.
+>
+> **Hooks adicionales** (ver SPEC fase 2 seccion 2.6.8): Fase 5 puede aprovechar `Notification` hook
+> (detectar `idle_prompt` cuando Claude espera), `Stop` hook (detectar preguntas via
+> `last_assistant_message`), y `PreCompact` hook (notificar antes de auto-compaction).
 
 ## Objetivo
 
@@ -87,20 +92,24 @@ Bot:  [frontend] ✓ Aprobado con feedback.
 
 **Modo `confirm`** (default):
 
-- Cada tool use de Claude Code genera un mensaje de aprobacion
+- Cada tool use de Claude Code genera un mensaje de aprobacion via hooks `PreToolUse`
 - Botones: [Yes] [Yes + feedback] [No]
-- Mapeo: equivale a `--allowedTools ""` (ninguno pre-aprobado)
+- System prompt: `CONFIRM_MODE_PROMPT` (describe antes de cada accion, espera aprobacion)
+- Hooks: activos para `Bash|Write|Edit|NotebookEdit` (bloquean hasta WhatsApp approve/reject)
 
 **Modo `plan`**:
 
-- Se inyecta `--append-system-prompt "Antes de ejecutar cambios, presenta un plan detallado y espera aprobacion."`
+- System prompt: `PLAN_MODE_PROMPT` (investigar → presentar plan → esperar aprobacion → ejecutar)
+- Hooks: activos pero el system prompt hace que Claude presente un plan global primero
 - Claude describe lo que hara ANTES de hacerlo
-- Usuario aprueba el plan completo
-- Luego Claude ejecuta todo (auto-accept de las acciones individuales del plan aprobado)
+- Usuario aprueba el plan completo conversacionalmente
+- Luego Claude ejecuta paso a paso, con aprobacion individual via hooks
 
 **Modo `auto`**:
 
-- Se pasa `--allowedTools "Read,Edit,Bash,Grep,Glob,Write"` (todos pre-aprobados)
+- System prompt: `AUTO_MODE_PROMPT` (ejecutar directamente, reportar al final)
+- Hooks: **desactivados** — se genera `.claude/settings.local.json` sin hooks `PreToolUse`
+- Solo usa `--dangerously-skip-permissions` (ya requerido en todos los modos para headless)
 - Claude ejecuta sin preguntar
 - Output se envia segun output mode
 - ADVERTENCIA al activar: `"⚠️ Modo auto activado. Claude ejecutara sin pedir permiso."`

@@ -2,8 +2,8 @@
 
 > **Spec**: [SPEC.md](./SPEC.md)
 > **Addendum**: [DM Pairing Access Control](./ADDENDUM-dm-pairing-access-control.md)
-> **Total tasks**: 52
-> **Sub-phases**: 1A-1H
+> **Total tasks**: 55
+> **Sub-phases**: 1A-1J
 
 ---
 
@@ -255,25 +255,58 @@
 
 ---
 
-## Summary by sub-phase
+## 1I — Post-implementation fixes (rev. 3 — 2026-02-19)
 
-| Sub-phase | Tasks  | Description                  | Parallelizable with  |
-| --------- | ------ | ---------------------------- | -------------------- |
-| **1A**    | 8      | Errors + config updates      | — (starting point)   |
-| **1B**    | 3      | Context tracker              | 1C, 1E               |
-| **1C**    | 6      | KapsoClient + webhook        | 1B, 1E               |
-| **1D**    | 7      | Kapso channel plugin         | 1E, 1F (partial)     |
-| **1E**    | 4      | ClaudeRunner                 | 1B, 1C               |
-| **1F**    | 3      | Approval manager             | 1D (partial)         |
-| **1G**    | 7      | Router + gateway integration | — (requires 1D + 1F) |
-| **1H**    | 4      | Onboarding + verification    | — (requires 1G)      |
-| **Total** | **42** |                              |                      |
+> Divergences found between the original SPEC (stdin approval) and the actual implementation
+> (`--dangerously-skip-permissions` + system prompt). These tasks align the codebase.
 
-### Critical path
+**Dependencies**: 1H (everything integrated)
 
-```
-1A → 1E → 1F → 1G → 1H
-1A → 1C → 1D → 1G → 1H
-```
+- [x] **1I.1** Remove dead code: `respondToApproval()` method in `src/sessions/jorchbot/claude-runner.ts`
+  - The method writes to stdin, but stdin is `"ignore"` when `skipPermissions=true`
+  - Remove the method entirely or guard it behind `skipPermissions === false`
+  - Update `claude-runner.test.ts`: remove/update `respondToApproval` tests
+- [x] **1I.2** Remove dead code: `ApprovalManager.resolveApproval()` calls `claudeRunner.respondToApproval()`
+  - In `src/sessions/jorchbot/approval-manager.ts`, the `resolveApproval()` method calls `respondToApproval()` which no longer works
+  - Update to just record the approval in DB (no stdin write)
+  - Update `approval-manager.test.ts` accordingly
+- [x] **1I.3** Verify `PLAN_MODE_PROMPT` is injected in `jorchbot-start.ts`
+  - The router should pass the system prompt to `ClaudeRunner.start()` via `--append-system-prompt`
+  - Confirm `src/commands/router.ts` uses `PLAN_MODE_PROMPT` from `src/commands/system-prompts.ts`
+- [x] **1I.4** Add tests for `skipPermissions` behavior in ClaudeRunner
+  - Test: when `skipPermissions=true` (default), spawn uses `stdin: "ignore"` + `--dangerously-skip-permissions`
+  - Test: args include `--append-system-prompt` when `systemPrompt` is provided
+- [x] **1I.5** Verify `pnpm check` passes after 1I.1-1I.4
 
-Both paths converge at 1G. **1B is independent** and can be done at any point after 1A.
+---
+
+## 1J — Manual verification
+
+> These are the remaining manual test items that require a running instance.
+
+- [ ] **1J.1** Start gateway with `jorchbot start` and verify it starts without errors
+- [ ] **1J.2** Send a Kapso webhook POST to `/webhooks/kapso` and verify it responds 200
+- [ ] **1J.3** Send a message from an unauthorized WP number → verify pairing code is returned
+- [ ] **1J.4** Send a message from an authorized WP number → verify Claude processes it
+- [ ] **1J.5** Verify conversational approval: Claude presents plan, user confirms with "dale"/"go"/"si"
+- [ ] **1J.6** Verify `--resume` works: send a second message → session continues
+- [ ] **1J.7** Verify context % is shown in the response
+- [ ] **1J.8** Graceful shutdown: press Ctrl+C → verify ClaudeRunner stops + DB closes cleanly
+
+---
+
+## Summary by sub-phase (updated)
+
+| Sub-phase | Tasks  | Description                  | Status     |
+| --------- | ------ | ---------------------------- | ---------- |
+| **1A**    | 8      | Errors + config updates      | Done       |
+| **1B**    | 3      | Context tracker              | Done       |
+| **1C**    | 6      | KapsoClient + webhook        | Done       |
+| **1D**    | 7      | Kapso channel plugin         | Done       |
+| **1E**    | 4      | ClaudeRunner                 | Done       |
+| **1F**    | 3      | Approval manager             | Done       |
+| **1G**    | 7      | Router + gateway integration | Done (6/7) |
+| **1H**    | 4      | Onboarding + verification    | Done (3/4) |
+| **1I**    | 5      | Post-implementation fixes    | Done       |
+| **1J**    | 8      | Manual verification          | Pending    |
+| **Total** | **55** |                              |            |

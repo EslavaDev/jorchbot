@@ -225,16 +225,55 @@ Sesiones activas:
 
 **Criterio de aceptacion**: `/logs backend` muestra los ultimos 20 mensajes de esa sesion.
 
-### 2.7 Aprobaciones con session routing
+### 2.7 Aprobaciones via Claude Code Hooks
 
-Extender el sistema de aprobacion de fase 1 para multi-sesion:
+> **IMPORTANTE (rev. 3 — 2026-02-19)**: El flujo de aprobacion via stdin (escribir "yes"/"no" al
+> stdin de Claude Code) NO funciona. Claude Code se cuelga en modo headless con stdin piped.
+> Se requiere `--dangerously-skip-permissions` para operacion headless. La aprobacion a nivel de
+> herramienta se implementa via **hooks `PreToolUse` de Claude Code**.
 
-- [ ] Cada boton de aprobacion lleva `sessionId` + `requestId` en metadata
-- [ ] Al recibir click en boton, JorchBot extrae sessionId y rutea al proceso correcto
-- [ ] Botones de background incluyen nombre: `[Yes backend]` `[No backend]`
+**Arquitectura**: Claude Code ejecuta un hook script ANTES de cada herramienta de escritura/modificacion
+(Edit, Write, Bash, etc.). El hook script:
+
+1. Recibe JSON con `tool_name` y `tool_input` (ej: que archivo editar, que comando ejecutar)
+2. Llama al gateway JorchBot via HTTP (`POST /api/tool-approval`)
+3. El gateway envia botones WhatsApp al usuario via Kapso
+4. El hook espera (poll) hasta que el usuario responda
+5. Devuelve `allow` o `deny` a Claude Code
+
+**Ventajas sobre stdin**:
+
+- Funciona con `--dangerously-skip-permissions` (requerido para headless)
+- El usuario ve el **detalle completo** de lo que Claude quiere hacer (diff, comando, etc.)
+- No es solo si/no: puede inyectar contexto (`additionalContext`) o modificar parametros (`updatedInput`)
+- Herramientas de lectura (Read, Glob, Grep) pasan sin aprobacion — solo escritura necesita OK
+
+**Tareas**:
+
+- [ ] Crear script de hook PreToolUse (`src/hooks/tool-approval.ts`)
+- [ ] Crear script de hook PostToolUse + PostToolUseFailure (`src/hooks/tool-result.ts`) para reportar resultados y errores
+- [ ] Crear endpoints en gateway (`POST/GET /api/tool-approval`, `POST /api/tool-result`)
+- [ ] Reescribir ApprovalManager: HTTP-based en vez de stdin
+- [ ] Generar `.claude/settings.local.json` con config de hooks al crear sesion
+- [ ] Formatear mensajes de aprobacion para WhatsApp (diff para Edit, comando para Bash)
+- [ ] Cada boton de aprobacion lleva `approvalId` + `sessionId` en metadata
+- [ ] Al recibir click en boton, JorchBot extrae approvalId y rutea al proceso correcto
+- [ ] Botones de background incluyen nombre: `[backend] 🔧 Edit: src/api/...`
 - [ ] No cambiar sesion enfocada al responder aprobacion de background
 
-**Criterio de aceptacion**: Aprobar accion de backend sin salir de frontend.
+**Referencia de hooks**: Claude Code tiene 14 tipos de hook events. Fase 2 usa 3:
+`PreToolUse` (aprobacion), `PostToolUse` (reporte de resultados), `PostToolUseFailure` (reporte de errores).
+Otros hooks utiles para fases futuras: `Notification` (detectar Claude idle), `Stop` (detectar preguntas
+via `last_assistant_message`), `PreCompact` (notificar antes de auto-compaction). Ver SPEC seccion 2.6.8.
+
+**Nota sobre preguntas de Claude**: Cuando Claude hace preguntas (pide clarificacion, assumptions, etc.),
+NO hay un hook especial. Las preguntas fluyen como texto normal via `ClaudeRunner.on("text")` → WhatsApp.
+No se necesita hook adicional para esto.
+
+**Importante**: `PermissionRequest` hooks NO se disparan en modo headless (`-p`). Solo `PreToolUse` funciona.
+
+**Criterio de aceptacion**: Usuario ve detalle de cada tool call, toca Aprobar/Rechazar en WhatsApp.
+Claude Code procede o se ajusta segun la decision. Aprobaciones de background funcionan sin cambiar enfoque.
 
 ---
 
@@ -258,9 +297,12 @@ Extender el sistema de aprobacion de fase 1 para multi-sesion:
 ## Notas tecnicas
 
 - **Sesiones = agentes OpenClaw**: Cada sesion JorchBot es un agente en el sistema multi-agente de OpenClaw. SessionManager es un wrapper, no una reimplementacion.
-- **ClaudeRunner** corre como child process por sesion. Cada sesion es un proceso independiente.
+- **ClaudeRunner** corre como child process por sesion con `--dangerously-skip-permissions` + `stdin: "ignore"`. La aprobacion de herramientas NO va por stdin — va por hooks `PreToolUse`.
+- **Hooks PreToolUse**: Scripts que Claude Code ejecuta ANTES de cada herramienta. Son sincronos y bloquean a Claude Code hasta que el usuario apruebe o rechace via WhatsApp. Config en `.claude/settings.local.json` del workspace.
+- **14 hook events disponibles**: Claude Code soporta 14 tipos de hooks. Fase 2 usa 3 (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`). `PermissionRequest` NO funciona en modo headless. Preguntas de Claude fluyen como texto normal (no necesitan hook). Ver SPEC seccion 2.6.8 para tabla completa.
+- **Fase 1 (interino)**: Usa `REMOTE_SYSTEM_PROMPT` para que Claude describa su plan y espere confirmacion conversacional. Fase 2 lo reemplaza con aprobacion real a nivel de herramienta via hooks.
 - **ShellRunner** debe evaluar reusar `exec` tool de OpenClaw (BashProcessRegistry ya tiene timeouts, signals, tracking). Fallback: `child_process.exec`.
 - **Focus Model** es un estado en DB JorchBot (solo una sesion con `focused = true`). OpenClaw no tiene este concepto.
 - **Auto-compaction** ya existe via `sessions.compact` RPC. Solo conectarlo al comando `/compact`.
 - **Session write locking** y queue management ya resueltos en OpenClaw. No reimplementar.
-- Los botones de Kapso tienen un payload maximo. El metadata (sessionId + requestId) debe caber en ese payload.
+- Los botones de Kapso tienen un payload maximo. El metadata (`approvalId` + `sessionId`) debe caber en ese payload.

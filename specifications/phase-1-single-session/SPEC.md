@@ -1,6 +1,6 @@
 # Phase 1 — WhatsApp Channel + Single Session
 
-> **Status**: Pending
+> **Status**: Near Complete (implementation ~95% done, manual test items remain)
 > **Dependency**: Phase 0 (completed)
 > **Deliverable**: Talk to ONE Claude Code instance from WhatsApp via Kapso.ai
 > **When finished**: You send a message via WP → ClaudeRunner processes it → you receive a response
@@ -63,26 +63,40 @@ A 100% JorchBot-specific component (Layer 2). Executes Claude Code as a headless
 
 **Responsibilities**:
 
-- Spawn: `claude -p <prompt> --output-format stream-json`
-- Resume: `claude -p <prompt> --resume <session_id> --output-format stream-json`
+- Spawn: `claude -p <prompt> --output-format stream-json --dangerously-skip-permissions`
+- Resume: `claude -p <prompt> --resume <session_id> --output-format stream-json --dangerously-skip-permissions`
 - Parse streaming NDJSON (line by line)
-- Detect tool approval requests from the stream
-- Send approval/rejection back to the process via stdin
+- Inject system prompt via `--append-system-prompt` (PLAN_MODE_PROMPT for Phase 1)
+- Emit events for text responses, tool use (informational), and results
 - Calculate context window % from response metadata
 - Handle errors, timeouts, and unexpected process closure
 - Stop the session cleanly (SIGTERM → SIGKILL fallback)
 
-### 2.3 Basic approval flow
+> **NOTE (rev. 3 — 2026-02-19)**: Claude Code headless (`-p`) with stdin piped hangs
+> before emitting events. The `--dangerously-skip-permissions` flag is required for headless
+> operation, combined with `stdin: "ignore"`. Tool-level approval via stdin does NOT work.
+> Phase 1 uses a conversational system prompt approach instead. Phase 2 replaces this with
+> real tool-level approval via Claude Code `PreToolUse` hooks.
 
-When Claude Code asks permission to execute an action (Bash, Edit, etc.), JorchBot:
+### 2.3 Approval flow (Phase 1 — conversational via system prompt)
 
-1. Detects the `tool_use` request in the NDJSON stream
-2. Sends an interactive message to WP with 2 buttons: **[Yes] [No]**
-3. Receives the button response via webhook
-4. Sends the approval/rejection to the Claude Code process
-5. Records the approval in the `approvals` table of the DB
+> **NOTE (rev. 3 — 2026-02-19)**: Tool-level approval via stdin does NOT work in headless mode.
+> Claude Code hangs when stdin is piped. Phase 1 uses a conversational approach as an interim
+> solution. Phase 2 replaces this with real tool-level approval via `PreToolUse` hooks.
 
-> **Note**: "Yes + feedback" is implemented in Phase 5. In this phase only Yes/No.
+In Phase 1, approval is handled conversationally via a system prompt (`PLAN_MODE_PROMPT`):
+
+1. ClaudeRunner injects `PLAN_MODE_PROMPT` via `--append-system-prompt`
+2. The prompt instructs Claude to: investigate first, present a plan, wait for user confirmation
+3. User confirms with "dale"/"go"/"si" or rejects with "no"/"para"/"cancel"
+4. Claude executes (or doesn't) based on user's conversational response
+5. There is **no per-tool approval** — the entire plan is approved/rejected as a whole
+
+The `ApprovalManager` still exists for recording approval metadata in the DB, but it operates
+at the conversational level (plan approval), not at the individual tool level.
+
+> **Phase 2**: Each individual tool use (Edit, Bash, Write) is approved via `PreToolUse` hooks
+> that send WhatsApp buttons [Yes] [No]. See `docs/phase-2-multi-session.md` section 2.7.
 
 ### 2.4 Basic Command Router
 
@@ -779,21 +793,35 @@ Claude Code in headless mode (`-p` flag) with `--output-format stream-json` emit
 
 > **IMPORTANT**: The exact format of NDJSON events may vary depending on the Claude Code version. ClaudeRunner must be resilient to unknown fields and not fail on new event types.
 
-#### 3.3.2 How the approval flow works in Claude Code headless
+#### 3.3.2 Claude Code headless limitations and workarounds
 
-When Claude Code needs approval to execute a tool, the behavior depends on `--allowedTools`:
+> **CRITICAL (rev. 3 — 2026-02-19)**: Claude Code headless (`-p`) with piped stdin **hangs**
+> before emitting any NDJSON events. This was discovered during Phase 1 implementation.
 
-- If the tool is in `--allowedTools`, it executes without asking permission.
-- If it is NOT in the list, Claude Code **pauses and waits for input on stdin**.
+**What doesn't work**:
 
-The approval flow is handled via the process stdin/stdout:
+- Piping stdin (`stdio: ["pipe", "pipe", "pipe"]`) causes Claude Code to hang indefinitely
+- Writing `"yes\n"` / `"no\n"` to stdin for tool approval never works in headless mode
+- `--allowedTools` without `--dangerously-skip-permissions` also causes hangs
 
-1. Claude emits the `tool_use` event on stdout
-2. The process **pauses waiting for input** on stdin
-3. JorchBot writes `yes\n` or `no\n` to stdin
-4. Claude continues or looks for an alternative
+**What works (Phase 1 solution)**:
 
-> **CRITICAL NOTE**: This mechanism may change between Claude Code versions. The implementation must be defensive and log any unexpected behavior.
+- `--dangerously-skip-permissions` + `stdin: "ignore"` — Claude Code runs without asking
+  for per-tool permission. All tools are auto-approved at the process level.
+- `--append-system-prompt` injects `PLAN_MODE_PROMPT` — Claude is instructed to present
+  a plan and wait for conversational confirmation before executing.
+- Approval happens at the **conversation level** (user says "dale"/"go"/"si"), not at the
+  individual tool level.
+
+**Phase 2 solution (hooks)**:
+
+Phase 2 replaces conversational approval with real tool-level approval via Claude Code
+`PreToolUse` hooks. The hook script calls the JorchBot gateway HTTP API, which sends
+WhatsApp buttons to the user. See `specifications/phase-2-multi-session/SPEC.md` section 2.6.
+
+> **NOTE**: The `respondToApproval()` method still exists in the ClaudeRunner code but is
+> effectively unused when `skipPermissions: true` (the default in Phase 1). It is retained
+> for potential future use or removed in Phase 2.
 
 #### 3.3.3 ClaudeRunner implementation
 
@@ -929,20 +957,23 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
     prompt: string;
     cwd: string;
     systemPrompt?: string;
-    allowedTools?: string[];
+    skipPermissions?: boolean; // Default: true (required for headless operation)
     timeoutMs?: number;
   }): Promise<ClaudeRunnerResult> {
     const args = ["-p", options.prompt, "--output-format", "stream-json"];
+
+    // --dangerously-skip-permissions is required for headless mode.
+    // Without it, Claude Code hangs waiting for stdin approval.
+    const skipPerms = options.skipPermissions !== false;
+    if (skipPerms) {
+      args.push("--dangerously-skip-permissions");
+    }
 
     if (options.systemPrompt) {
       args.push("--append-system-prompt", options.systemPrompt);
     }
 
-    if (options.allowedTools?.length) {
-      args.push("--allowedTools", options.allowedTools.join(","));
-    }
-
-    return this.run(args, options.cwd, options.timeoutMs);
+    return this.run(args, options.cwd, options.timeoutMs, skipPerms);
   }
 
   /**
@@ -977,6 +1008,11 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
   /**
    * Respond to a pending tool approval request.
    * Writes "yes" or "no" to the Claude Code process stdin.
+   *
+   * NOTE (rev. 3): This method is effectively unused in Phase 1.
+   * When skipPermissions=true (the default), stdin is set to "ignore"
+   * and this method will always throw. Retained for potential Phase 2
+   * fallback or removed entirely.
    *
    * @throws {ClaudeRunnerProcessError} If no process is running or not waiting for approval
    */
@@ -1038,15 +1074,24 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
 
   // --- Private ---
 
-  private async run(args: string[], cwd: string, timeoutMs?: number): Promise<ClaudeRunnerResult> {
+  private async run(
+    args: string[],
+    cwd: string,
+    timeoutMs?: number,
+    skipPermissions = true,
+  ): Promise<ClaudeRunnerResult> {
     this.accumulatedText = "";
     this.status = "running";
 
     return new Promise<ClaudeRunnerResult>((resolve, reject) => {
       try {
+        // When skipPermissions=true (headless mode), stdin MUST be "ignore".
+        // Piping stdin causes Claude Code to hang before emitting any events.
+        const stdinMode = skipPermissions ? "ignore" : "pipe";
+
         this.process = spawn(CLAUDE_BINARY, args, {
           cwd,
-          stdio: ["pipe", "pipe", "pipe"],
+          stdio: [stdinMode, "pipe", "pipe"],
           env: { ...process.env },
         });
       } catch (err: unknown) {
@@ -1380,6 +1425,13 @@ export class CommandRouter {
 
 ### 3.5 Approval Manager — Detail
 
+> **NOTE (rev. 3)**: In Phase 1, the ApprovalManager operates at the conversational level,
+> not per-tool. Since `--dangerously-skip-permissions` is used, Claude executes tools without
+> asking. The `PLAN_MODE_PROMPT` system prompt makes Claude present a plan and wait for
+> conversational confirmation. The ApprovalManager records these plan-level approvals in the DB.
+>
+> In Phase 2, this is replaced with real per-tool approval via `PreToolUse` hooks.
+
 The approval manager connects the approval flow between ClaudeRunner and the WhatsApp channel.
 
 ```typescript
@@ -1540,13 +1592,17 @@ const KapsoSchema = z.object({
   apiKey: z.string().default(""),
   phoneNumberId: z.string().default(""),
   webhookVerifyToken: z.string().default(""),
+  webhookSecret: z.string().default(""), // HMAC signature verification
+  dmPolicy: z.enum(["pairing", "allowlist", "open", "disabled"]).default("pairing"),
+  allowFrom: z.array(z.string()).default([]),
+  skipPermissions: z.boolean().default(true), // Required true for headless
 });
 ```
 
-Additionally, the OpenClaw config (`~/.openclaw/openclaw.json`) needs a `channels.kapso` section so the Plugin SDK recognizes the channel. This config is written during onboarding (`jorchbot setup`):
+Additionally, the OpenClaw config (`~/.jorchbot/jorchbot.json`) needs a `channels.kapso` section so the Plugin SDK recognizes the channel. This config is written during onboarding (`jorchbot setup`):
 
 ```json5
-// ~/.openclaw/openclaw.json (partial)
+// ~/.jorchbot/jorchbot.json (partial)
 {
   channels: {
     kapso: {
@@ -1697,20 +1753,25 @@ The complete flow of a message from WhatsApp to Claude Code and back:
 1. User sends "fix the login bug" on WhatsApp
 2. Kapso receives the message and sends it via webhook POST to JorchBot
 3. Kapso webhook handler extracts the text and sender phone
-4. OpenClaw gateway normalizes the message (MsgContext)
-5. DM pairing verifies the sender is authorized
-6. Gateway routes the message to the active agent
-7. CommandRouter detects it is free text (not a /command)
-8. CommandRouter sends the prompt to ClaudeRunner
-9. ClaudeRunner executes: claude -p "fix the login bug" --output-format stream-json
-10. ClaudeRunner parses NDJSON in streaming:
-    a. Emits "text" event → JorchBot sends "[session] Analyzing Login.tsx..."
-    b. Emits "toolUse" event → ApprovalManager creates approval + sends buttons
-    c. User taps [Yes] → webhook → ApprovalManager.resolveApproval() → ClaudeRunner.respondToApproval(true)
-    d. Emits "result" event → JorchBot sends "[session] Completed. Context: 12%"
-11. Context % is updated in DB (sessions.contextPercent)
-12. Response message is sent via KapsoClient.sendText()
+4. Access control checks sender (DM pairing, allowlist, or open policy)
+5. If unauthorized → send pairing code; if authorized → continue
+6. CommandRouter detects it is free text (not a /command)
+7. CommandRouter sends the prompt to ClaudeRunner
+8. ClaudeRunner executes: claude -p "fix the login bug" --output-format stream-json
+     --dangerously-skip-permissions --append-system-prompt <PLAN_MODE_PROMPT>
+9. ClaudeRunner parses NDJSON in streaming:
+    a. Emits "text" event → JorchBot sends text to WhatsApp
+    b. Claude (via PLAN_MODE_PROMPT) presents plan: "I'll need to: ..."
+    c. User confirms conversationally ("dale" / "go" / "si")
+    d. ClaudeRunner resumes with user's confirmation as new prompt
+    e. Claude executes the plan (all tools auto-approved via --dangerously-skip-permissions)
+    f. Emits "result" event → JorchBot sends "[session] Completed. Context: 12%"
+10. Context % is updated in DB (sessions.contextPercent)
+11. Response message is sent via KapsoClient.sendText()
 ```
+
+> **NOTE**: In Phase 2, step 9b-d is replaced with per-tool approval via `PreToolUse` hooks
+> that send WhatsApp buttons [Yes] [No] for each individual tool invocation.
 
 ---
 
@@ -1766,12 +1827,16 @@ JorchBot and OpenClaw maintain separate configs:
 | Config   | Path                        | Format | Content                                            |
 | -------- | --------------------------- | ------ | -------------------------------------------------- |
 | JorchBot | `~/.jorchbot/config.json`   | JSON   | gateway port, DB, approvals, channel enabled flags |
-| OpenClaw | `~/.openclaw/openclaw.json` | JSON5  | channel accounts, DM policies, agent profiles      |
+| OpenClaw | `~/.jorchbot/jorchbot.json` | JSON5  | channel accounts, DM policies, agent profiles      |
+
+> **NOTE**: The OpenClaw state directory was renamed from `~/.openclaw/` to `~/.jorchbot/`
+> (defined in `src/config/paths.ts`: `NEW_STATE_DIRNAME = ".jorchbot"`). The config file
+> was also renamed from `openclaw.json` to `jorchbot.json`.
 
 The onboarding (`jorchbot setup`) writes to both files:
 
 1. `~/.jorchbot/config.json` — enables Kapso, saves API key
-2. `~/.openclaw/openclaw.json` — registers the Kapso account for the Plugin SDK
+2. `~/.jorchbot/jorchbot.json` — registers the Kapso account for the Plugin SDK
 
 ---
 
@@ -2360,22 +2425,25 @@ describe("formatContextUsage", () => {
 
 ## 8. Acceptance criteria (Definition of Done)
 
-- [ ] Send a text message via WhatsApp → receive a Claude Code response
-- [ ] Kapso works as a channel plugin in `extensions/kapso/` via Plugin SDK
-- [ ] DM pairing works automatically (inherited from Plugin SDK)
-- [ ] Claude Code runs headless with `-p` and streaming NDJSON
-- [ ] Claude Code session persists between messages (`--resume` works)
-- [ ] Approvals work with Yes / No buttons in WhatsApp
-- [ ] Context % is shown in each response
-- [ ] `/help` shows list of commands
-- [ ] `/status` shows gateway and session status
-- [ ] `jorchbot setup` configures Kapso correctly
-- [ ] Webhook verification works (GET with challenge)
-- [ ] Errors are shown to the user in the chat (not swallowed)
-- [ ] Graceful shutdown stops ClaudeRunner and closes DB
-- [ ] All unit tests pass
-- [ ] `pnpm check` passes (format + types + lint)
-- [ ] No `any` in new JorchBot code
+- [x] Send a text message via WhatsApp → receive a Claude Code response
+- [x] Kapso works as a channel plugin in `extensions/kapso/` via Plugin SDK
+- [x] DM pairing / access control works (unauthorized number receives pairing code)
+- [x] Claude Code runs headless with `-p --dangerously-skip-permissions` and streaming NDJSON
+- [x] Claude Code session persists between messages (`--resume` works)
+- [x] Conversational approval works (PLAN_MODE_PROMPT: Claude presents plan, user confirms)
+- [x] Context % is shown in each response
+- [x] `/help` shows list of commands
+- [x] `/status` shows gateway and session status
+- [x] Webhook verification works (GET with challenge + HMAC signature verification)
+- [x] Errors are shown to the user in the chat (not swallowed)
+- [x] All unit tests pass
+- [x] `pnpm check` passes (format + types + lint)
+- [x] No `any` in new JorchBot code
+- [ ] Manual verification: gateway starts and accepts webhooks (task 1G.7)
+- [ ] Manual verification: graceful shutdown (Ctrl+C) cleans up everything (task 1H.4)
+
+> **NOTE**: Per-tool approval with Yes/No buttons is Phase 2 scope (via `PreToolUse` hooks).
+> Phase 1 uses conversational approval via `PLAN_MODE_PROMPT` system prompt.
 
 ---
 
@@ -2383,19 +2451,20 @@ describe("formatContextUsage", () => {
 
 These limitations are intentional and are resolved in later phases:
 
-| Limitation                        | Phase that resolves it                |
-| --------------------------------- | ------------------------------------- |
-| Only 1 Claude Code session        | Phase 2 (multi-session + Focus Model) |
-| No direct shell (`$` prefix)      | Phase 2 (ShellRunner)                 |
-| No Jorchfile                      | Phase 3 (Jorchfile engine)            |
-| No automatic tunnels              | Phase 4 (Tunnel Manager)              |
-| No "Yes + feedback" in approvals  | Phase 5 (advanced UX)                 |
-| No plan/auto/silent modes         | Phase 5                               |
-| No Kapso lists (buttons only)     | Phase 5                               |
-| No Telegram                       | Phase 7                               |
-| Webhook requires manual URL setup | Phase 4 (Tailscale automates it)      |
-| No WP group support               | Depends on Kapso                      |
-| No media (images, files)          | Later phase                           |
+| Limitation                                                | Phase that resolves it                                |
+| --------------------------------------------------------- | ----------------------------------------------------- |
+| Only 1 Claude Code session                                | Phase 2 (multi-session + Focus Model)                 |
+| No per-tool approval (only conversational via sys prompt) | Phase 2 (PreToolUse hooks with WP buttons)            |
+| No direct shell (`$` prefix)                              | Phase 2 (ShellRunner)                                 |
+| No Jorchfile                                              | Phase 3 (Jorchfile engine)                            |
+| No automatic tunnels                                      | Phase 4 (Tunnel Manager)                              |
+| No "Yes + feedback" in approvals                          | Phase 5 (advanced UX)                                 |
+| No plan/auto/silent mode switching (`/mode` command)      | Phase 5 (only PLAN_MODE_PROMPT as default in Phase 1) |
+| No Kapso lists (buttons only)                             | Phase 5                                               |
+| No Telegram                                               | Phase 7                                               |
+| Webhook requires manual URL setup                         | Phase 4 (Tailscale automates it)                      |
+| No WP group support                                       | Depends on Kapso                                      |
+| No media (images, files)                                  | Later phase                                           |
 
 ---
 
@@ -2418,13 +2487,13 @@ These limitations are intentional and are resolved in later phases:
 
 ### 10.2 Implementation risks
 
-| Risk                                                       | Mitigation                                                    |
-| ---------------------------------------------------------- | ------------------------------------------------------------- |
-| Claude Code NDJSON format changes                          | Defensive parsing, ignore unknown events                      |
-| stdin/stdout approval flow doesn't work as expected        | Investigate during implementation, document the real protocol |
-| OpenClaw gateway integration is more complex than expected | Study `server.impl.ts` and `server-channels.ts` in detail     |
-| Kapso API rate limits                                      | Implement exponential backoff in KapsoClient                  |
-| Webhook URL requires public HTTPS                          | Document manual setup with Tailscale Funnel in Phase 1        |
+| Risk                                                       | Status / Mitigation                                                                                         |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Claude Code NDJSON format changes                          | Defensive parsing implemented, unknown events ignored                                                       |
+| stdin/stdout approval flow doesn't work as expected        | **MATERIALIZED** — stdin piped causes hang. Mitigated with `--dangerously-skip-permissions` + system prompt |
+| OpenClaw gateway integration is more complex than expected | Resolved — `jorchbot-start.ts` uses Express directly with webhook routes                                    |
+| Kapso API rate limits                                      | Client has basic error handling; exponential backoff deferred to Phase 5                                    |
+| Webhook URL requires public HTTPS                          | Documented manual setup with Tailscale Funnel; Phase 4 automates it                                         |
 
 ### 10.3 External dependencies
 

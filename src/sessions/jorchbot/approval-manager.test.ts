@@ -12,29 +12,18 @@ type InsertApprovalFn = (record: {
 }) => void;
 type UpdateApprovalFn = (id: string, status: string, resolvedAt: Date) => void;
 
-function createMockRunner() {
-  return {
-    respondToApproval: vi.fn(),
-    getSessionId: vi.fn(() => "sess_123"),
-    getStatus: vi.fn(() => "waiting_approval" as const),
-  };
-}
-
 describe("ApprovalManager", () => {
   let manager: ApprovalManager;
-  let mockRunner: ReturnType<typeof createMockRunner>;
   let sendButtons: ReturnType<typeof vi.fn<SendButtonsFn>>;
   let insertApproval: ReturnType<typeof vi.fn<InsertApprovalFn>>;
   let updateApproval: ReturnType<typeof vi.fn<UpdateApprovalFn>>;
 
   beforeEach(() => {
-    mockRunner = createMockRunner();
     sendButtons = vi.fn<SendButtonsFn>().mockResolvedValue(undefined);
     insertApproval = vi.fn<InsertApprovalFn>();
     updateApproval = vi.fn<UpdateApprovalFn>();
 
     manager = new ApprovalManager({
-      claudeRunner: mockRunner as never,
       sessionId: "sess_123",
       sendButtons,
       insertApproval,
@@ -87,9 +76,6 @@ describe("ApprovalManager", () => {
     expect(result).toBe(true);
     expect(updateApproval).toHaveBeenCalledTimes(1);
     expect(updateApproval.mock.calls[0][1]).toBe("approved");
-
-    // oxlint-disable-next-line typescript/unbound-method -- vi.fn() mock
-    expect(mockRunner.respondToApproval).toHaveBeenCalledWith(true);
   });
 
   it("resolveApproval(id, false) updates DB to rejected", async () => {
@@ -106,9 +92,6 @@ describe("ApprovalManager", () => {
     expect(result).toBe(true);
     expect(updateApproval).toHaveBeenCalledTimes(1);
     expect(updateApproval.mock.calls[0][1]).toBe("rejected");
-
-    // oxlint-disable-next-line typescript/unbound-method -- vi.fn() mock
-    expect(mockRunner.respondToApproval).toHaveBeenCalledWith(false);
   });
 
   it("resolveApproval returns false for nonexistent ID", async () => {

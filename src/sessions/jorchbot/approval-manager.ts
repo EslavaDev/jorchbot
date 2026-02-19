@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalButtonPayload } from "../../../extensions/kapso/src/types.js";
-import type { ClaudeRunner } from "./claude-runner.js";
 
 interface ApprovalRecord {
   id: string;
@@ -12,7 +11,6 @@ interface ApprovalRecord {
 }
 
 interface ApprovalManagerDeps {
-  claudeRunner: ClaudeRunner;
   sessionId: string;
   sendButtons: (text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>;
   insertApproval?: (record: ApprovalRecord) => void;
@@ -93,7 +91,6 @@ export class ApprovalManager {
       this.deps.updateApproval(approvalId, approved ? "approved" : "rejected", new Date());
     }
 
-    this.deps.claudeRunner.respondToApproval(approved);
     this.pending.delete(approvalId);
 
     return true;

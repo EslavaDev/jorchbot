@@ -80,6 +80,58 @@ describe("ClaudeRunner", () => {
       return promise;
     });
 
+    it("uses stdin 'ignore' when skipPermissions is true (default)", () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc as never);
+
+      const promise = runner.start({ prompt: "hello", cwd: "/tmp" });
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "claude",
+        expect.any(Array),
+        expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+      );
+
+      proc.emit("exit", 0, null);
+      return promise;
+    });
+
+    it("uses stdin 'pipe' when skipPermissions is false", () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc as never);
+
+      const promise = runner.start({ prompt: "hello", cwd: "/tmp", skipPermissions: false });
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "claude",
+        expect.any(Array),
+        expect.objectContaining({ stdio: ["pipe", "pipe", "pipe"] }),
+      );
+
+      proc.emit("exit", 0, null);
+      return promise;
+    });
+
+    it("includes --append-system-prompt when systemPrompt is provided", () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc as never);
+
+      const promise = runner.start({
+        prompt: "hello",
+        cwd: "/tmp",
+        systemPrompt: "You are in PLAN mode.",
+      });
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "claude",
+        expect.arrayContaining(["--append-system-prompt", "You are in PLAN mode."]),
+        expect.any(Object),
+      );
+
+      proc.emit("exit", 0, null);
+      return promise;
+    });
+
     it("parses session_id from init event", async () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc as never);
@@ -119,7 +171,7 @@ describe("ClaudeRunner", () => {
       expect(textEvents).toEqual(["Hello world"]);
     });
 
-    it("emits toolUse events and sets status to waiting_approval", async () => {
+    it("emits toolUse events (informational, not blocking)", async () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc as never);
 
@@ -145,12 +197,10 @@ describe("ClaudeRunner", () => {
 
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(runner.getStatus()).toBe("waiting_approval");
+      // With --dangerously-skip-permissions, status stays "running" (no approval wait)
+      expect(runner.getStatus()).toBe("running");
       expect(toolEvents).toHaveLength(1);
 
-      // Clean up: approve and exit
-      proc.stdin.writable = true;
-      runner.respondToApproval(true);
       proc.emit("exit", 0, null);
       return promise;
     });
@@ -255,63 +305,6 @@ describe("ClaudeRunner", () => {
 
       proc2.emit("exit", 0, null);
       return resumePromise;
-    });
-  });
-
-  describe("respondToApproval()", () => {
-    it("writes 'yes\\n' to stdin on approve", async () => {
-      const proc = createMockProcess();
-      mockSpawn.mockReturnValue(proc as never);
-
-      const promise = runner.start({ prompt: "test", cwd: "/tmp" });
-
-      // Trigger waiting_approval
-      feedLine(proc, {
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }],
-        },
-      });
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      runner.respondToApproval(true);
-
-      // oxlint-disable-next-line typescript/unbound-method -- vi.fn() mock
-      expect(proc.stdin.write).toHaveBeenCalledWith("yes\n");
-
-      proc.emit("exit", 0, null);
-      return promise;
-    });
-
-    it("writes 'no\\n' to stdin on reject", async () => {
-      const proc = createMockProcess();
-      mockSpawn.mockReturnValue(proc as never);
-
-      const promise = runner.start({ prompt: "test", cwd: "/tmp" });
-
-      feedLine(proc, {
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }],
-        },
-      });
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      runner.respondToApproval(false);
-
-      // oxlint-disable-next-line typescript/unbound-method -- vi.fn() mock
-      expect(proc.stdin.write).toHaveBeenCalledWith("no\n");
-
-      proc.emit("exit", 0, null);
-      return promise;
-    });
-
-    it("throws if not waiting for approval", () => {
-      expect(() => runner.respondToApproval(true)).toThrow(ClaudeRunnerProcessError);
     });
   });
 

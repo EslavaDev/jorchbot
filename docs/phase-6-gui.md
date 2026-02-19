@@ -9,13 +9,14 @@
 
 ## Nota Arquitectural (rev. 2 — DeepWiki)
 
-> **Decision: Extender Control UI existente de OpenClaw (puerto 18791)**
+> **Decision: Extender Control UI existente de OpenClaw (puerto 18789)**
 >
-> OpenClaw ya tiene una Control UI servida como assets estaticos desde el Gateway
-> en el puerto `basePort + 2` (18791 en configuracion default). La GUI de JorchBot
-> debe **extender esta UI existente**, NO crear una GUI nueva desde cero.
+> OpenClaw ya tiene una Control UI servida como assets estaticos desde el mismo
+> puerto del Gateway (18789). La GUI de JorchBot debe **extender esta UI existente**,
+> NO crear una GUI nueva desde cero.
 >
-> El code base de la UI esta en `src/web/` y `ui/` (Lit-based web components).
+> El code base de la UI esta en `ui/` (Lit 3.x web components, build con Vite 7.x).
+> Ver `docs/gui-jorchbot.md` para hallazgos tecnicos detallados.
 
 ## Objetivo
 
@@ -43,28 +44,24 @@ sesiones) en vez de hacerlo todo por mensajes de texto.
 
 **Decision (rev. 2)**: Extender la **Control UI existente** de OpenClaw. NO crear GUI nueva.
 
-- [ ] Examinar la UI existente en `src/web/` y `ui/` (Lit-based web components)
-- [ ] Agregar paginas/componentes JorchBot a la UI existente
-- [ ] Reutilizar el WebSocket del Gateway para real-time data
+- [ ] Montar la Control UI existente de `ui/` en el gateway de JorchBot
+- [ ] Agregar paginas/componentes JorchBot a la UI existente (Lit web components)
+- [ ] Implementar WebSocket server minimo para comunicacion real-time
 
 **La Control UI de OpenClaw**:
 
-- Servida en puerto **18791** (basePort + 2)
-- Assets estaticos desde el Gateway
-- Basada en Lit web components (`ui/`)
-- Ya tiene WebSocket para comunicacion real-time
+- Servida en el **mismo puerto del gateway (18789)** — NO basePort+2
+- Assets estaticos en `dist/control-ui/` (build con `pnpm ui:build`)
+- Basada en Lit 3.x web components (`ui/`)
+- WebSocket para comunicacion real-time (HTTP upgrade en el mismo puerto)
 
-**Endpoints (puerto 18791)**:
+**Endpoints (puerto 18789 — Gateway)**:
 
-- `https://device.ts.net:18791/` → GUI dashboard (Control UI extendida)
-- `https://device.ts.net:18791/ws` → WebSocket
+- `https://device.ts.net:18789/` → GUI dashboard (Control UI extendida)
+- `ws://device.ts.net:18789` → WebSocket (HTTP upgrade, mismo puerto)
+- `https://device.ts.net:18789/webhooks/kapso` → Kapso webhooks
 
-**Webhooks (puerto 18789 — Gateway)**:
-
-- `https://device.ts.net:18789/webhook/kapso` → Kapso webhooks
-- `https://device.ts.net:18789/api/` → REST API
-
-**Criterio de aceptacion**: Abrir la URL del Control UI (puerto 18791) muestra el dashboard de JorchBot.
+**Criterio de aceptacion**: Abrir la URL del gateway (puerto 18789) muestra el dashboard de JorchBot.
 
 ### 6.2 Dashboard principal
 
@@ -157,11 +154,11 @@ sesiones) en vez de hacerlo todo por mensajes de texto.
 ### 6.8 Tailscale Serve para la GUI
 
 - [ ] Al iniciar JorchBot, auto-exponer Control UI via Tailscale Serve
-- [ ] URL: `https://<device>.<tailnet>.ts.net:18791` (basePort + 2)
+- [ ] URL: `https://<device>.<tailnet>.ts.net:18789` (mismo puerto del gateway)
 - [ ] Solo accesible desde dispositivos del tailnet
 - [ ] Mostrar URL en terminal al iniciar y via `/gui` en WP
 
-**Criterio de aceptacion**: Acceder a la GUI desde el celular via Tailscale en puerto 18791.
+**Criterio de aceptacion**: Acceder a la GUI desde el celular via Tailscale en puerto 18789.
 
 ---
 
@@ -174,6 +171,6 @@ sesiones) en vez de hacerlo todo por mensajes de texto.
 - [ ] Tunnel panel con create/stop
 - [ ] Settings editables desde GUI
 - [ ] Extiende Control UI existente de OpenClaw (no GUI nueva)
-- [ ] Accesible via Tailscale Serve en puerto 18791 (basePort + 2)
+- [ ] Accesible via Tailscale Serve en puerto 18789 (mismo puerto del gateway)
 - [ ] `/gui` en WP envia la URL
 - [ ] Tests pasan, CI en verde
