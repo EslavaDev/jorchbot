@@ -97,7 +97,8 @@
       "Bash(pnpm config:*)",
       "Bash(npx node-gyp rebuild:*)",
       "Bash(pnpm lint:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(git stash:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

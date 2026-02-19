@@ -63,7 +63,7 @@ function setTempHome(base: string) {
   process.env.USERPROFILE = base;
   // Ensure tests using HOME isolation aren't affected by leaked OPENCLAW_HOME.
   delete process.env.OPENCLAW_HOME;
-  process.env.OPENCLAW_STATE_DIR = path.join(base, ".openclaw");
+  process.env.OPENCLAW_STATE_DIR = path.join(base, ".jorchbot");
 
   if (process.platform !== "win32") {
     return;
@@ -80,7 +80,7 @@ export async function withTempHome<T>(
   fn: (home: string) => Promise<T>,
   opts: { env?: Record<string, EnvValue>; prefix?: string } = {},
 ): Promise<T> {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), opts.prefix ?? "openclaw-test-home-"));
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), opts.prefix ?? "jorchbot-test-home-"));
   const snapshot = snapshotEnv();
   const envKeys = Object.keys(opts.env ?? {});
   for (const key of envKeys) {
@@ -91,7 +91,7 @@ export async function withTempHome<T>(
   const envSnapshot = snapshotExtraEnv(envKeys);
 
   setTempHome(base);
-  await fs.mkdir(path.join(base, ".openclaw", "agents", "main", "sessions"), { recursive: true });
+  await fs.mkdir(path.join(base, ".jorchbot", "agents", "main", "sessions"), { recursive: true });
   if (opts.env) {
     for (const [key, raw] of Object.entries(opts.env)) {
       const value = typeof raw === "function" ? raw(base) : raw;

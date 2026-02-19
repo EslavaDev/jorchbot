@@ -16,7 +16,7 @@ describe("config io write", () => {
     env?: NodeJS.ProcessEnv;
     logger?: { warn: (msg: string) => void; error: (msg: string) => void };
   }) {
-    const configPath = path.join(params.home, ".openclaw", "openclaw.json");
+    const configPath = path.join(params.home, ".jorchbot", "jorchbot.json");
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(configPath, JSON.stringify(params.initialConfig, null, 2), "utf-8");
 
@@ -63,7 +63,7 @@ describe("config io write", () => {
         error: vi.fn(),
       },
     });
-    const auditPath = path.join(params.home, ".openclaw", "logs", "config-audit.jsonl");
+    const auditPath = path.join(params.home, ".jorchbot", "logs", "config-audit.jsonl");
     const next = structuredClone(snapshot.config);
     const gateway =
       next.gateway && typeof next.gateway === "object"
@@ -80,7 +80,7 @@ describe("config io write", () => {
   }
 
   it("persists caller changes onto resolved config without leaking runtime defaults", async () => {
-    await withTempHome("openclaw-config-io-", async (home) => {
+    await withTempHome("jorchbot-config-io-", async (home) => {
       const { configPath, io, snapshot } = await writeConfigAndCreateIo({
         home,
         initialConfig: { gateway: { port: 18789 } },
@@ -97,7 +97,7 @@ describe("config io write", () => {
   });
 
   it("preserves env var references when writing", async () => {
-    await withTempHome("openclaw-config-io-", async (home) => {
+    await withTempHome("jorchbot-config-io-", async (home) => {
       const { configPath, io, snapshot } = await writeConfigAndCreateIo({
         home,
         env: { OPENAI_API_KEY: "sk-secret" } as NodeJS.ProcessEnv,
@@ -132,7 +132,7 @@ describe("config io write", () => {
   });
 
   it("does not reintroduce Slack/Discord legacy dm.policy defaults when writing", async () => {
-    await withTempHome("openclaw-config-io-", async (home) => {
+    await withTempHome("jorchbot-config-io-", async (home) => {
       const { configPath, io, snapshot } = await writeConfigAndCreateIo({
         home,
         initialConfig: {
@@ -178,8 +178,8 @@ describe("config io write", () => {
   });
 
   it("keeps env refs in arrays when appending entries", async () => {
-    await withTempHome("openclaw-config-io-", async (home) => {
-      const configPath = path.join(home, ".openclaw", "openclaw.json");
+    await withTempHome("jorchbot-config-io-", async (home) => {
+      const configPath = path.join(home, ".jorchbot", "jorchbot.json");
       await fs.mkdir(path.dirname(configPath), { recursive: true });
       await fs.writeFile(
         configPath,
@@ -251,7 +251,7 @@ describe("config io write", () => {
   });
 
   it("logs an overwrite audit entry when replacing an existing config file", async () => {
-    await withTempHome("openclaw-config-io-", async (home) => {
+    await withTempHome("jorchbot-config-io-", async (home) => {
       const warn = vi.fn();
       const { configPath, io, snapshot } = await writeConfigAndCreateIo({
         home,
@@ -281,7 +281,7 @@ describe("config io write", () => {
   });
 
   it("does not log an overwrite audit entry when creating config for the first time", async () => {
-    await withTempHome("openclaw-config-io-", async (home) => {
+    await withTempHome("jorchbot-config-io-", async (home) => {
       const warn = vi.fn();
       const io = createConfigIO({
         env: {} as NodeJS.ProcessEnv,
@@ -304,7 +304,7 @@ describe("config io write", () => {
   });
 
   it("appends config write audit JSONL entries with forensic metadata", async () => {
-    await withTempHome("openclaw-config-io-", async (home) => {
+    await withTempHome("jorchbot-config-io-", async (home) => {
       const { configPath, lines, last } = await writeGatewayPatchAndReadLastAuditEntry({
         home,
         initialConfig: { gateway: { port: 18789 } },
@@ -324,7 +324,7 @@ describe("config io write", () => {
   });
 
   it("records gateway watch session markers in config audit entries", async () => {
-    await withTempHome("openclaw-config-io-", async (home) => {
+    await withTempHome("jorchbot-config-io-", async (home) => {
       const { last } = await writeGatewayPatchAndReadLastAuditEntry({
         home,
         initialConfig: { gateway: { mode: "local" } },

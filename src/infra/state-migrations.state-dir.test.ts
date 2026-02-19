@@ -10,7 +10,7 @@ import {
 let tempRoot: string | null = null;
 
 async function makeTempRoot() {
-  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "openclaw-state-dir-"));
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "jorchbot-state-dir-"));
   tempRoot = root;
   return root;
 }
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 describe("legacy state dir auto-migration", () => {
-  it("follows legacy symlink when it points at another legacy dir (clawdbot -> moltbot)", async () => {
+  it("skips migration when no recognized legacy dirs exist (clawdbot/moltbot are not JorchBot legacy dirs)", async () => {
     const root = await makeTempRoot();
     const legacySymlink = path.join(root, ".clawdbot");
     const legacyDir = path.join(root, ".moltbot");
@@ -41,12 +41,9 @@ describe("legacy state dir auto-migration", () => {
       homedir: () => root,
     });
 
-    expect(result.migrated).toBe(true);
+    // .clawdbot and .moltbot are not in JorchBot's LEGACY_STATE_DIRNAMES,
+    // so the migration function won't find any legacy dir to migrate from.
+    expect(result.migrated).toBe(false);
     expect(result.warnings).toEqual([]);
-
-    const targetMarker = path.join(root, ".openclaw", "marker.txt");
-    expect(fs.readFileSync(targetMarker, "utf-8")).toBe("ok");
-    expect(fs.readFileSync(path.join(root, ".moltbot", "marker.txt"), "utf-8")).toBe("ok");
-    expect(fs.readFileSync(path.join(root, ".clawdbot", "marker.txt"), "utf-8")).toBe("ok");
   });
 });

@@ -7,14 +7,13 @@
  * internals work transparently while users never see "openclaw" in their
  * environment.
  *
- * It also sets the default state directory to `~/.jorchbot` so all config,
- * logs, sessions, and credentials live under a JorchBot-branded path.
+ * NOTE: The default state directory (~/.jorchbot) is already handled by
+ * `src/config/paths.ts` (NEW_STATE_DIRNAME = ".jorchbot"). This module
+ * only handles the env var aliasing layer.
  *
  * IMPORTANT: This file must NOT import anything that transitively loads
- * `src/config/paths.ts` — only `node:os` and `node:path` are safe here.
+ * `src/config/paths.ts` — only Node.js built-ins are safe here.
  */
-import os from "node:os";
-import path from "node:path";
 
 /**
  * Map of user-facing JORCHBOT_* env vars → internal OPENCLAW_* env vars.
@@ -38,15 +37,11 @@ const ENV_ALIASES: ReadonlyArray<readonly [jorchbot: string, openclaw: string]> 
   ["JORCHBOT_NO_RESPAWN", "OPENCLAW_NO_RESPAWN"],
 ] as const;
 
+export { ENV_ALIASES };
+
 for (const [jb, oc] of ENV_ALIASES) {
   const jbValue = process.env[jb]?.trim();
   if (jbValue) {
     process.env[oc] = jbValue;
   }
-}
-
-// Default state dir: ~/.jorchbot (only if neither JORCHBOT_STATE_DIR nor
-// OPENCLAW_STATE_DIR was explicitly set by the user).
-if (!process.env.OPENCLAW_STATE_DIR) {
-  process.env.OPENCLAW_STATE_DIR = path.join(os.homedir(), ".jorchbot");
 }
