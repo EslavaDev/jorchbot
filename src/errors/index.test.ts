@@ -9,6 +9,10 @@ import {
   JorchBotError,
   JorchBotGatewayNotRunningError,
   JorchBotGatewayStartError,
+  ClaudeRunnerSpawnError,
+  ClaudeRunnerParseError,
+  ClaudeRunnerTimeoutError,
+  ClaudeRunnerProcessError,
 } from "./index.js";
 
 describe("JorchBotError hierarchy", () => {
@@ -23,6 +27,10 @@ describe("JorchBotError hierarchy", () => {
       new JorchBotDbQueryError("query"),
       new JorchBotGatewayStartError("start"),
       new JorchBotGatewayNotRunningError("not running"),
+      new ClaudeRunnerSpawnError("spawn"),
+      new ClaudeRunnerParseError("parse"),
+      new ClaudeRunnerTimeoutError("timeout"),
+      new ClaudeRunnerProcessError("process"),
     ];
 
     for (const err of cases) {
@@ -41,6 +49,10 @@ describe("JorchBotError hierarchy", () => {
       JorchBotDbQueryError,
       JorchBotGatewayStartError,
       JorchBotGatewayNotRunningError,
+      ClaudeRunnerSpawnError,
+      ClaudeRunnerParseError,
+      ClaudeRunnerTimeoutError,
+      ClaudeRunnerProcessError,
     ];
 
     for (const Cls of subclasses) {

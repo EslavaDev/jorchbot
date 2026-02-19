@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 JorchBot is a fork of [OpenClaw](https://github.com/openclaw/openclaw) (MIT). It's a remote development tool that controls Claude Code instances from WhatsApp/Telegram. The fork preserves OpenClaw's full history for upstream cherry-picks.
 
 **Two-layer architecture:**
+
 - **Layer 1 (OpenClaw)**: Gateway, WebSocket control plane, multi-agent system, Plugin SDK, DM pairing, memory system, tool policies, auto-compaction
 - **Layer 2 (JorchBot-specific)**: ClaudeRunner (Claude Code as subprocess), Kapso WhatsApp channel plugin, Focus Model, ShellRunner, Jorchfile, context % tracking
 
@@ -37,7 +38,7 @@ pnpm drizzle-kit generate
 
 - **Runtime**: Node.js >= 22.12.0
 - **Language**: TypeScript (ESM, strict mode, target es2023, module NodeNext)
-- **Package manager**: pnpm 10.x (monorepo: root + ui workspace; packages/* and extensions/* disabled)
+- **Package manager**: pnpm 10.x (monorepo: root + ui workspace; packages/_ and extensions/_ disabled)
 - **Build**: tsdown (Rolldown-based)
 - **Test**: Vitest 4.x with V8 coverage. Tests colocated as `*.test.ts` next to source.
 - **Lint**: Oxlint (no ESLint). Config: `.oxlintrc.json`
@@ -50,17 +51,22 @@ pnpm drizzle-kit generate
 ## Architecture
 
 ### Entry Points
+
 - `jorchbot.mjs` → `src/entry.ts`: CLI bootstrap (sets process.title, imports `src/cli/run-main.js`)
 - `src/index.ts`: Public API exports + Commander program
 
 ### CLI Registration
+
 Commands are **lazily registered** for performance. Pattern in `src/cli/program/`:
+
 - `command-registry.ts`: Core commands array (`CoreCliEntry[]`). JorchBot commands registered as `jb` subcommand.
 - `register.subclis.ts`: Sub-CLI groups (gateway, agents, pairing, plugins, etc.) — async imports, placeholder→real on first use
 - `register.jorchbot.ts`: JorchBot-specific commands (start, stop, status, config, version)
 
 ### Gateway (`src/gateway/`)
+
 Express + WebSocket server on port 18789. Core files:
+
 - `server.ts` / `server-shared.ts`: Server lifecycle
 - `server-channels.ts`: Channel plugin loading (checks `enabled` flags)
 - `auth.ts` / `device-auth.ts`: Authentication
@@ -68,6 +74,7 @@ Express + WebSocket server on port 18789. Core files:
 - `control-ui.ts`: Web dashboard
 
 ### JorchBot-Specific Code
+
 - `src/config/jorchbot-config.ts`: Zod schema for `~/.jorchbot/config.json`
 - `src/config/jorchbot-config-loader.ts`: Config loader with env var overrides
 - `src/db/`: SQLite + Drizzle ORM (5 tables: sessions, messages, tunnels, approvals, settings)
@@ -78,6 +85,7 @@ Express + WebSocket server on port 18789. Core files:
 - `src/channels/kapso/`: Placeholder — real implementation goes in `extensions/kapso/` as Plugin SDK channel
 
 ### OpenClaw Systems (Layer 1, reuse)
+
 - `src/channels/plugins/`: Channel plugin registry and lifecycle
 - `src/plugin-sdk/`: Plugin SDK for extensions
 - `src/pairing/`: DM pairing auth (6-digit code)
@@ -86,6 +94,7 @@ Express + WebSocket server on port 18789. Core files:
 - `src/agents/`: Multi-agent system (profiles, tools, auth)
 
 ### Test Setup
+
 - `test/setup.ts`: Main setup (stub channel adapters, plugin registry, beforeEach/afterEach)
 - `test/test-env.ts`: Environment isolation (temp HOME, env vars)
 - Tests use `JORCHBOT_DB_PATH` and `JORCHBOT_CONFIG_DIR` env vars for isolation

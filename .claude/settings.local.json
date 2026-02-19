@@ -98,7 +98,10 @@
       "Bash(npx node-gyp rebuild:*)",
       "Bash(pnpm lint:*)",
       "Bash(sqlite3:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(pnpm format:*)",
+      "Bash(git -C /Users/porkycode/Documents/porky/jj status --short)",
+      "WebFetch(domain:docs.kapso.ai)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -16,6 +16,9 @@ const DbSchema = z.object({
 const KapsoSchema = z.object({
   enabled: z.boolean().default(false),
   apiKey: z.string().default(""),
+  phoneNumberId: z.string().default(""),
+  webhookVerifyToken: z.string().default(""),
+  webhookSecret: z.string().default(""),
 });
 
 const TelegramSchema = z.object({

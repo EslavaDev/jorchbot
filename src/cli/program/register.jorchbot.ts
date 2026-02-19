@@ -4,6 +4,13 @@ import { loadConfig } from "../../config/jorchbot-config-loader.js";
 export function registerJorchBotCommands(program: Command): void {
   const jb = program.command("jb").description("JorchBot commands");
 
+  jb.command("setup")
+    .description("Interactive setup wizard for JorchBot")
+    .action(async () => {
+      const { runSetup } = await import("../../gateway/jorchbot-setup.js");
+      await runSetup();
+    });
+
   jb.command("start")
     .description("Start the JorchBot gateway")
     .option("-p, --port <port>", "Gateway port")

@@ -38,3 +38,17 @@ export class JorchBotGatewayStartError extends JorchBotError {}
 
 /** Attempted operation on a gateway that is not running */
 export class JorchBotGatewayNotRunningError extends JorchBotError {}
+
+// --- ClaudeRunner errors ---
+
+/** Claude binary not found or failed to spawn */
+export class ClaudeRunnerSpawnError extends JorchBotError {}
+
+/** Failed to parse Claude Code NDJSON output */
+export class ClaudeRunnerParseError extends JorchBotError {}
+
+/** Claude Code process exceeded timeout */
+export class ClaudeRunnerTimeoutError extends JorchBotError {}
+
+/** Claude Code process exited with non-zero code or other runtime error */
+export class ClaudeRunnerProcessError extends JorchBotError {}

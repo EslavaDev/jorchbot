@@ -37,6 +37,19 @@ function writeConfigFile(filePath: string, config: JorchBotConfig): void {
 }
 
 /**
+ * Save JorchBot configuration to ~/.jorchbot/config.json.
+ *
+ * Creates the config directory if it doesn't exist.
+ *
+ * @throws {JorchBotConfigNotFoundError} If the config directory cannot be created
+ */
+export function saveConfig(config: JorchBotConfig): void {
+  const configDir = resolveConfigDir();
+  ensureConfigDir(configDir);
+  writeConfigFile(resolveConfigPath(), config);
+}
+
+/**
  * Load JorchBot configuration from ~/.jorchbot/config.json.
  *
  * If the file doesn't exist, creates it with defaults.

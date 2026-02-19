@@ -10,6 +10,9 @@ describe("JorchBotConfigSchema", () => {
     expect(config.db.path).toBe("~/.jorchbot/jorchbot.db");
     expect(config.db.logRetentionDays).toBe(7);
     expect(config.channels.kapso.enabled).toBe(false);
+    expect(config.channels.kapso.phoneNumberId).toBe("");
+    expect(config.channels.kapso.webhookVerifyToken).toBe("");
+    expect(config.channels.kapso.webhookSecret).toBe("");
     expect(config.channels.telegram.enabled).toBe(false);
     expect(config.tunnels.defaultMode).toBe("serve");
     expect(config.tunnels.tailscale.enabled).toBe(true);
@@ -21,7 +24,14 @@ describe("JorchBotConfigSchema", () => {
     const config = JorchBotConfigSchema.parse({
       gateway: { port: 9999, host: "0.0.0.0" },
       db: { logRetentionDays: 14 },
-      channels: { kapso: { enabled: true, apiKey: "sk-test" } },
+      channels: {
+        kapso: {
+          enabled: true,
+          apiKey: "sk-test",
+          phoneNumberId: "12345",
+          webhookVerifyToken: "verify-me",
+        },
+      },
     });
 
     expect(config.gateway.port).toBe(9999);
@@ -29,6 +39,8 @@ describe("JorchBotConfigSchema", () => {
     expect(config.db.logRetentionDays).toBe(14);
     expect(config.channels.kapso.enabled).toBe(true);
     expect(config.channels.kapso.apiKey).toBe("sk-test");
+    expect(config.channels.kapso.phoneNumberId).toBe("12345");
+    expect(config.channels.kapso.webhookVerifyToken).toBe("verify-me");
     // Unset fields still get defaults
     expect(config.tunnels.defaultMode).toBe("serve");
   });
