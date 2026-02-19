@@ -117,7 +117,7 @@ export const tunnels = sqliteTable("tunnels", {
   localPort: integer("local_port").notNull(),
   assignedPort: integer("assigned_port"),
   url: text("url"),
-  provider: text("provider").notNull(), // tailscale-serve|tailscale-funnel|cloudflare
+  provider: text("provider").notNull(), // tailscale-serve|tailscale-funnel
   mode: text("mode").notNull().default("serve"), // serve|funnel
   status: text("status").notNull().default("active"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
@@ -149,20 +149,19 @@ export const settings = sqliteTable("settings", {
 jorchbot/
 ├── src/
 │   ├── gateway/              # Gateway core (heredado de OpenClaw)
-│   ├── channels/
-│   │   ├── kapso/            # Fase 1: WhatsApp via Kapso
-│   │   └── telegram/         # Fase 7: Telegram via gramY
+│   ├── channels/             # Channel registry (heredado de OpenClaw)
 │   ├── sessions/
-│   │   ├── manager.ts        # Fase 2: Session Manager
-│   │   ├── claude-runner.ts  # Fase 1: Claude Code headless
-│   │   └── shell-runner.ts   # Fase 2: Shell execution
+│   │   └── jorchbot/
+│   │       ├── manager.ts        # Fase 2: SessionManager (wrapper sobre agents RPC)
+│   │       ├── focus-model.ts    # Fase 2: Focus Model (sesion activa vs background)
+│   │       ├── claude-runner.ts  # Fase 1: Claude Code headless subprocess
+│   │       └── shell-runner.ts   # Fase 2: Shell Runner (comandos $ directos)
 │   ├── jorchfile/
 │   │   ├── parser.ts         # Fase 3: Jorchfile parser
 │   │   └── executor.ts       # Fase 3: Command executor
 │   ├── tunnels/
 │   │   ├── manager.ts        # Fase 4: Tunnel Manager
-│   │   ├── tailscale.ts      # Fase 4: Tailscale integration
-│   │   ├── cloudflare.ts     # Fase 4: Cloudflare fallback
+│   │   ├── tailscale.ts      # Fase 4: Tailscale integration (unico provider)
 │   │   └── port-manager.ts   # Fase 4: Port auto-discovery
 │   ├── commands/
 │   │   └── router.ts         # Fase 1: Command routing (/new, /switch, etc.)
@@ -170,13 +169,17 @@ jorchbot/
 │   │   └── manager.ts        # Fase 1: Approval flow (Yes/No/Feedback)
 │   ├── messages/
 │   │   └── chunker.ts        # Fase 5: Message splitting/chunking
-│   ├── gui/                  # Fase 6: Web dashboard
+│   ├── gui/                  # Fase 6: Extender Control UI existente (puerto 18791)
 │   ├── db/
 │   │   ├── index.ts          # DB connection singleton
 │   │   ├── schema.ts         # Drizzle schema
 │   │   └── migrations/       # SQL migrations
+│   ├── errors/
+│   │   └── index.ts          # JorchBot error class hierarchy
 │   └── utils/
 │       └── logger.ts         # Logging utility
+├── extensions/
+│   └── kapso/                # Fase 1: WhatsApp via Kapso (channel plugin via Plugin SDK)
 ├── config/
 │   └── default.ts            # Default configuration
 ├── tests/
@@ -188,6 +191,14 @@ jorchbot/
 ├── tsconfig.json
 └── README.md
 ```
+
+> **NOTA ARQUITECTURAL (rev. 2)**:
+>
+> - **Kapso** se implementa como **channel plugin** en `extensions/kapso/` usando el Plugin SDK de OpenClaw. Esto hereda gratis: DM pairing, message chunking, access control.
+> - **Sesiones** usan el **multi-agente nativo** de OpenClaw (`agents.create/update/delete`). No se crea un SessionManager custom.
+> - **Shell execution** considera reusar el `exec` tool de OpenClaw (BashProcessRegistry con timeouts, signals).
+> - **Tunnels** usan **solo Tailscale** (Serve y Funnel). Sin Cloudflare.
+> - **Focus Model** es el unico concepto nuevo de sesion (OpenClaw no tiene "sesion enfocada").
 
 - [ ] Crear estructura de directorios con archivos placeholder
 - [ ] Cada directorio tiene un `index.ts` que exporta el modulo
@@ -228,9 +239,6 @@ jorchbot/
     "defaultMode": "serve",
     "tailscale": {
       "enabled": true
-    },
-    "cloudflare": {
-      "enabled": false
     }
   },
   "approvals": {
@@ -280,3 +288,6 @@ jorchbot/
 - No eliminar modulos de OpenClaw, solo desconectarlos. Facilita cherry-pick de fixes upstream.
 - La DB se crea con migraciones automaticas al iniciar. No requiere setup manual.
 - El Gateway debe arrancar aunque no haya canales configurados (modo "headless").
+- **Estrategia rev. 2**: Extender OpenClaw, no reconstruir. Reusar multi-agente, sessions, DM pairing, tool policies. Solo ClaudeRunner y Focus Model son componentes nuevos de runtime.
+- **Dos SQLite coexisten**: OpenClaw memory (`~/.openclaw/memory/`) + JorchBot metadata (`~/.jorchbot/jorchbot.db`).
+- **Config**: JorchBot usa JSON (`~/.jorchbot/config.json`), OpenClaw usa JSON5 (`~/.openclaw/openclaw.json`). Ambos coexisten.

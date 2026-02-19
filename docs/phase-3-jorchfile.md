@@ -244,6 +244,25 @@ Bot:  Proyectos en Jorchfile:
 
 ---
 
+## Nota sobre Skills de OpenClaw (rev. 2)
+
+> **Overlap con Skills**: El campo `instructions` del Jorchfile se solapa con el
+> sistema de Skills de OpenClaw. Las Skills proveen guia de lenguaje natural para
+> tools (documentacion inyectada al prompt), con discovery por workspace/agent/bundled.
+>
+> **Considerar**: En vez de inyectar `instructions` como `--append-system-prompt`,
+> el Jorchfile Engine podria generar **Skills dinamicamente** (un `SKILL.md` temporal
+> por proyecto) que se inyectan via el sistema de Skills existente. Esto permitiria:
+>
+> - Reusar el discovery system de OpenClaw
+> - Combinar instructions del Jorchfile con Skills del workspace
+> - Variables de entorno por skill (`skills.entries[skillName].env`)
+>
+> **Decision**: Implementar `--append-system-prompt` primero (simple). Evaluar migracion
+> a Skills en una iteracion futura si los beneficios lo justifican.
+
+---
+
 ## Definicion de "Terminado"
 
 - [ ] Jorchfile parser funciona con el formato definido

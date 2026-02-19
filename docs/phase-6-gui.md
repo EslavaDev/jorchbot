@@ -7,17 +7,27 @@
 
 ---
 
+## Nota Arquitectural (rev. 2 — DeepWiki)
+
+> **Decision: Extender Control UI existente de OpenClaw (puerto 18791)**
+>
+> OpenClaw ya tiene una Control UI servida como assets estaticos desde el Gateway
+> en el puerto `basePort + 2` (18791 en configuracion default). La GUI de JorchBot
+> debe **extender esta UI existente**, NO crear una GUI nueva desde cero.
+>
+> El code base de la UI esta en `src/web/` y `ui/` (Lit-based web components).
+
 ## Objetivo
 
-Crear un dashboard web que complemente la experiencia de WhatsApp. Para tareas
-que son mas comodas en una GUI (editar Jorchfile, ver logs, monitorear sesiones)
-en vez de hacerlo todo por mensajes de texto.
+Extender la Control UI existente de OpenClaw para agregar funcionalidades de JorchBot.
+Para tareas que son mas comodas en una GUI (editar Jorchfile, ver logs, monitorear
+sesiones) en vez de hacerlo todo por mensajes de texto.
 
 ---
 
 ## Entregables
 
-1. Dashboard principal (estado general)
+1. Dashboard principal (estado general) — extendiendo Control UI existente
 2. Session monitor (sesiones en tiempo real)
 3. Jorchfile editor (visual)
 4. Log viewer (con busqueda y filtros)
@@ -31,30 +41,30 @@ en vez de hacerlo todo por mensajes de texto.
 
 ### 6.1 Stack tecnico de la GUI
 
-**Decision**: Reutilizar la infraestructura de WebChat UI que ya tiene OpenClaw.
+**Decision (rev. 2)**: Extender la **Control UI existente** de OpenClaw. NO crear GUI nueva.
 
-- [ ] Evaluar que tech usa OpenClaw para su WebChat/Control UI
-- [ ] Si es utilizable, extenderlo. Si no, crear SPA minima.
+- [ ] Examinar la UI existente en `src/web/` y `ui/` (Lit-based web components)
+- [ ] Agregar paginas/componentes JorchBot a la UI existente
+- [ ] Reutilizar el WebSocket del Gateway para real-time data
 
-**Opcion A** (preferida): Si OpenClaw usa React/Vue/Svelte para su WebChat:
+**La Control UI de OpenClaw**:
 
-- Extender con nuevas paginas/componentes
-- Reutilizar el WebSocket del Gateway para real-time data
+- Servida en puerto **18791** (basePort + 2)
+- Assets estaticos desde el Gateway
+- Basada en Lit web components (`ui/`)
+- Ya tiene WebSocket para comunicacion real-time
 
-**Opcion B** (fallback): SPA minima con:
+**Endpoints (puerto 18791)**:
 
-- Framework: Preact o vanilla TS (minimo bundle)
-- Comunicacion: WebSocket al Gateway + REST endpoints
-- Styling: Tailwind CSS o CSS minimal
+- `https://device.ts.net:18791/` → GUI dashboard (Control UI extendida)
+- `https://device.ts.net:18791/ws` → WebSocket
 
-**El Gateway sirve la GUI** en el mismo puerto (18789):
+**Webhooks (puerto 18789 — Gateway)**:
 
-- `https://device.ts.net:18789/` → GUI dashboard
-- `https://device.ts.net:18789/ws` → WebSocket
-- `https://device.ts.net:18789/api/` → REST API
 - `https://device.ts.net:18789/webhook/kapso` → Kapso webhooks
+- `https://device.ts.net:18789/api/` → REST API
 
-**Criterio de aceptacion**: Abrir la URL del Gateway muestra el dashboard.
+**Criterio de aceptacion**: Abrir la URL del Control UI (puerto 18791) muestra el dashboard de JorchBot.
 
 ### 6.2 Dashboard principal
 
@@ -146,12 +156,12 @@ en vez de hacerlo todo por mensajes de texto.
 
 ### 6.8 Tailscale Serve para la GUI
 
-- [ ] Al iniciar JorchBot, auto-exponer GUI via Tailscale Serve
-- [ ] URL: `https://<device>.<tailnet>.ts.net:18789`
+- [ ] Al iniciar JorchBot, auto-exponer Control UI via Tailscale Serve
+- [ ] URL: `https://<device>.<tailnet>.ts.net:18791` (basePort + 2)
 - [ ] Solo accesible desde dispositivos del tailnet
 - [ ] Mostrar URL en terminal al iniciar y via `/gui` en WP
 
-**Criterio de aceptacion**: Acceder a la GUI desde el celular via Tailscale.
+**Criterio de aceptacion**: Acceder a la GUI desde el celular via Tailscale en puerto 18791.
 
 ---
 
@@ -163,6 +173,7 @@ en vez de hacerlo todo por mensajes de texto.
 - [ ] Log viewer con busqueda y filtros
 - [ ] Tunnel panel con create/stop
 - [ ] Settings editables desde GUI
-- [ ] Accesible via Tailscale Serve
+- [ ] Extiende Control UI existente de OpenClaw (no GUI nueva)
+- [ ] Accesible via Tailscale Serve en puerto 18791 (basePort + 2)
 - [ ] `/gui` en WP envia la URL
 - [ ] Tests pasan, CI en verde

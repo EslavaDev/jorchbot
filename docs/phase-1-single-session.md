@@ -7,6 +7,26 @@
 
 ---
 
+## Nota Arquitectural (rev. 2 — DeepWiki)
+
+> **Kapso como Channel Plugin**: Kapso se implementa como **channel plugin** en
+> `extensions/kapso/` usando el Plugin SDK de OpenClaw. NO como adapter aislado.
+> Al usar el Plugin SDK, Kapso hereda **gratis**:
+>
+> - DM pairing (autenticacion con codigo de 6 digitos)
+> - Message chunking (respeto del limite de 4096 chars)
+> - Access control (allowlist, politicas de acceso)
+> - Message normalization y routing pipeline
+>
+> La implementacion debe seguir el patron de `extensions/whatsapp/` (Baileys).
+>
+> **ClaudeRunner**: Codigo 100% nuevo de JorchBot. OpenClaw no ejecuta
+> Claude Code como subproceso. ClaudeRunner es la unica pieza de runtime
+> verdaderamente nueva que JorchBot agrega sobre OpenClaw.
+>
+> **DM Pairing**: Se hereda automaticamente al usar el Plugin SDK. No hay
+> que implementarlo — el channel plugin lo recibe gratis.
+
 ## Objetivo
 
 Conectar WhatsApp (via Kapso.ai) al Gateway de JorchBot y poder mantener
@@ -17,39 +37,58 @@ basico de aprobacion con botones (Yes/No).
 
 ## Entregables
 
-1. Canal Kapso.ai funcional (enviar/recibir mensajes WP)
+1. Canal Kapso.ai como **channel plugin** en `extensions/kapso/` via Plugin SDK
 2. Claude Code Runner (ejecuta `claude -p` headless)
 3. Una sesion unica de Claude Code
 4. Aprobaciones basicas con botones (Yes / No)
 5. Context window % en cada respuesta
 6. Command router basico (/help, /status)
+7. DM pairing heredado automaticamente del Plugin SDK
 
 ---
 
 ## Tareas
 
-### 1.1 Integrar Kapso.ai como canal WhatsApp
+### 1.1 Integrar Kapso.ai como channel plugin (Plugin SDK)
 
 - [ ] Instalar SDK: `pnpm add @kapso/whatsapp-cloud-api`
-- [ ] Crear `src/channels/kapso/adapter.ts`
+- [ ] Crear `extensions/kapso/` como workspace package
+- [ ] Registrar en `package.json` manifest via `openclaw.extensions`
+- [ ] Implementar channel plugin siguiendo patron de `extensions/whatsapp/`
 - [ ] Implementar webhook receiver (mensajes entrantes)
 - [ ] Implementar message sender (mensajes salientes)
 - [ ] Implementar interactive messages (botones, hasta 3)
 - [ ] Manejar la ventana de 24h (tracking del ultimo mensaje del user)
 - [ ] Config: `kapsoApiKey`, `phoneNumberId`, `webhookUrl`
-- [ ] Tests unitarios del adapter
+- [ ] Verificar que DM pairing se hereda del Plugin SDK
+- [ ] Tests unitarios del plugin
+
+**Lo que se hereda GRATIS del Plugin SDK**:
+
+- DM pairing (codigo de 6 digitos para vincular numero de WP)
+- Message chunking (textLimit por canal, 4096 default para WP)
+- Access control (4 politicas: pairing, allowlist, open, disabled)
+- Message normalization y routing pipeline
+- Session key generation (`agent:{agentId}:{channel}:{scope}:{identifier}`)
 
 **Webhook setup**:
 JorchBot necesita un endpoint publico para recibir webhooks de Kapso.
-En fase 1, el user debe configurar manualmente (Tailscale Funnel o ngrok).
+En fase 1, el user debe configurar manualmente (Tailscale Funnel).
 En fase 4, esto se automatiza.
 
-**Estructura del adapter**:
+**Estructura del plugin**:
 
 ```typescript
-// src/channels/kapso/adapter.ts
-export class KapsoAdapter {
-  // Recibir mensajes
+// extensions/kapso/index.ts
+// Channel plugin via OpenClaw Plugin SDK
+// Sigue el patron de extensions/whatsapp/ (Baileys)
+
+export class KapsoChannelPlugin {
+  // Plugin lifecycle
+  async onActivate(): Promise<void>;
+  async onDeactivate(): Promise<void>;
+
+  // Recibir mensajes (webhook handler)
   async handleIncomingMessage(webhook: KapsoWebhook): Promise<void>;
 
   // Enviar texto
@@ -69,7 +108,7 @@ export class KapsoAdapter {
 }
 ```
 
-**Criterio de aceptacion**: Enviar "hola" por WP y recibir respuesta de JorchBot.
+**Criterio de aceptacion**: Enviar "hola" por WP y recibir respuesta de JorchBot. DM pairing funciona sin implementacion adicional.
 
 ### 1.2 Claude Code Runner
 
@@ -195,6 +234,8 @@ export class CommandRouter {
 ## Definicion de "Terminado"
 
 - [ ] Enviar mensaje por WP → recibir respuesta de Claude Code
+- [ ] Kapso funciona como channel plugin en `extensions/kapso/` via Plugin SDK
+- [ ] DM pairing se hereda del Plugin SDK (no implementacion adicional)
 - [ ] Aprobaciones funcionan con botones Yes / No
 - [ ] Context % se muestra en cada respuesta
 - [ ] `/help` y `/status` funcionan

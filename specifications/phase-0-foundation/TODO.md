@@ -2,7 +2,7 @@
 
 > **Spec**: [SPEC.md](./SPEC.md)
 > **Status**: Pending
-> **Total tasks**: 42
+> **Total tasks**: 69
 
 Tasks are split into sequential sub-phases. Each sub-phase must be completed before the next begins.
 
@@ -190,6 +190,91 @@ End-to-end validation of the complete Phase 0.
 
 ---
 
+## Sub-phase 0K: DeepWiki Architectural Corrections (8 tasks)
+
+Corrections based on DeepWiki analysis of OpenClaw's real architecture. These ensure Phase 0 artifacts accurately reflect what OpenClaw provides natively vs what JorchBot must build new.
+
+### Code changes (already applied)
+
+- [x] **0K.1** Remove Cloudflare from `src/db/schema.ts` — tunnels provider enum now `["tailscale-serve", "tailscale-funnel"]` only
+- [x] **0K.2** Remove Cloudflare from `src/config/jorchbot-config.ts` — removed `CloudflareSchema` and `cloudflare` key from `TunnelsSchema`
+- [x] **0K.3** Remove Cloudflare assertion from `src/config/jorchbot-config.test.ts`
+- [x] **0K.4** Delete `src/tunnels/cloudflare.ts` placeholder — no longer needed
+
+### SPEC.md corrections (already applied)
+
+- [x] **0K.5** Fix SPEC.md section 6.1 + 6.4: OpenClaw uses JSON5 (`~/.openclaw/openclaw.json`), not YAML
+- [x] **0K.6** Fix SPEC.md section 5.3: Remove `"cloudflare"` from tunnels provider enum in schema example
+- [x] **0K.7** Fix SPEC.md section 8.2: Remove `cloudflare.ts` from directory structure placeholder listing
+- [x] **0K.8** Fix SPEC.md Appendix A + section 2: Config references updated to JSON5
+
+### Phase doc updates (already applied)
+
+- [x] **0K.9** Update `docs/phase-1-single-session.md`: Add nota arquitectural — Kapso debe implementarse como canal plugin (`extensions/kapso/`) usando el Plugin SDK de OpenClaw, no como adapter aislado
+- [x] **0K.10** Update `docs/phase-2-multi-session.md`: Add nota arquitectural — OpenClaw ya tiene sistema multi-agente nativo (`agents.list/create/update/delete` RPC). SessionManager debe usar Capa 1 (OpenClaw agents) + Capa 2 (ClaudeRunner como child process). Focus Model es JorchBot-specific.
+- [x] **0K.11** Update `docs/phase-4-tunnels.md`: Eliminar seccion 4.5 Cloudflare, eliminar Cloudflare de entregables y definicion de terminado. Solo Tailscale Serve/Funnel.
+- [x] **0K.12** Update `docs/phases-index.md`: Add nota de revision arquitectural post-DeepWiki
+
+### Placeholder notes (already applied)
+
+- [x] **0K.13** Update placeholder files with architectural notes from DeepWiki analysis:
+  - `src/channels/kapso/index.ts` — plugin pattern note
+  - `src/sessions/jorchbot/manager.ts` — use OpenClaw agents RPC note
+  - `src/sessions/jorchbot/claude-runner.ts` — ClaudeRunner is JorchBot-specific note
+  - `src/sessions/jorchbot/shell-runner.ts` — OpenClaw exec tool context note
+  - `src/tunnels/manager.ts` — Tailscale-only note
+  - `src/tunnels/tailscale.ts` — Serve/Funnel modes note
+
+**Acceptance**: All corrections applied. SPEC, phase docs, and placeholders reflect DeepWiki findings. Build and tests pass.
+
+---
+
+## Sub-phase 0L: Full Phase Docs Alignment Audit (11 tasks)
+
+Deep audit and rewrite of ALL phase docs (0-6) + SPEC to fully align with DeepWiki analysis (research.md section 17). Goes beyond 0K's initial corrections with complete rewrites of architectural sections, entregables, tasks, and definitions of done.
+
+### Phase 0 doc + SPEC (already applied)
+
+- [x] **0L.1** Fix `docs/phase-0-foundation.md`: Kapso path `src/channels/kapso/` → `extensions/kapso/`, session refs `src/sessions/manager.ts` → `focus-model.ts` + `claude-runner.ts`, remove residual `cloudflare.ts` from structure, add comprehensive architectural note block (rev. 2)
+- [x] **0L.2** Fix `docs/phase-0-foundation.md`: Add notes to "Notas Tecnicas" section — two-SQLite coexistence, JSON vs JSON5, extend-not-rebuild strategy
+- [x] **0L.3** Fix `specifications/phase-0-foundation/SPEC.md`: Update directory structure — Kapso paths, session placeholders, add `extensions/kapso/` section, add 5-principle architectural note block, update placeholder template to reference Plugin SDK pattern
+
+### Phase 1 deep rewrite (already applied)
+
+- [x] **0L.4** Rewrite `docs/phase-1-single-session.md` Nota Arquitectural: explicit Plugin SDK inheritance list (DM pairing, chunking, access control, message normalization)
+- [x] **0L.5** Rewrite `docs/phase-1-single-session.md` task 1.1: `KapsoChannelPlugin` class in `extensions/kapso/`, follows `extensions/whatsapp/` pattern, Plugin SDK hooks. Remove ngrok mention (solo Tailscale Funnel). Add entregable 7 (DM pairing). Update DoD with plugin + DM pairing checks.
+
+### Phase 2 deep rewrite (already applied)
+
+- [x] **0L.6** Rewrite `docs/phase-2-multi-session.md` task 2.1: SessionManager como wrapper sobre `agents.create/delete/list/update` RPC. Add command → RPC mapping table.
+- [x] **0L.7** Rewrite `docs/phase-2-multi-session.md` task 2.3: ShellRunner references OpenClaw's `exec` tool (BashProcessRegistry). Rewrite Notas tecnicas (sessions = OpenClaw agents, auto-compaction exists, write locking exists).
+
+### Phase 3, 5, 6 new architectural notes (already applied)
+
+- [x] **0L.8** Add `docs/phase-3-jorchfile.md`: New section "Nota sobre Skills de OpenClaw (rev. 2)" documenting overlap between Jorchfile `instructions` field and OpenClaw Skills system. Decision: `--append-system-prompt` first, evaluate migration later.
+- [x] **0L.9** Add `docs/phase-5-advanced-ux.md`: New "Nota Arquitectural (rev. 2)" — existing OpenClaw systems (auto-compaction via `sessions.compact`, tool approval via `exec.ask` modes, message chunking via `textLimit`). Clarifies what's new vs inherited.
+- [x] **0L.10** Rewrite `docs/phase-6-gui.md`: Fix port 18789 → 18791 for Control UI (basePort + 2). Add architectural note "Extender Control UI existente". Rewrite task 6.1 stack (Lit web components from `ui/`). Update Tailscale Serve section and DoD.
+
+### Verification (already applied)
+
+- [x] **0L.11** Grep sweep: Confirm zero remaining `src/channels/kapso` or `cloudflare` references in any phase doc or SPEC. All phase docs (0-9) aligned with research.md section 17.
+
+**Acceptance**: All phase docs and SPEC accurately reflect DeepWiki analysis. No stale architectural references remain. Each phase doc has appropriate rev. 2 notes where applicable.
+
+---
+
+## Sub-phase 0M: Missing Placeholders & Structure Alignment (3 tasks)
+
+Final alignment pass: create placeholder files and directories that the SPEC promises but were never created, and fix SPEC/doc directory listings to match all actual files.
+
+- [x] **0M.1** Create `extensions/kapso/` directory with `package.json`, `openclaw.plugin.json`, and `index.ts` placeholder — follows `extensions/whatsapp/` pattern (Plugin SDK)
+- [x] **0M.2** Create `src/sessions/jorchbot/focus-model.ts` placeholder — Focus Model concept (Phase 2, JorchBot-specific)
+- [x] **0M.3** Update SPEC section 8.2 and Phase 0 doc section 0.4: list ALL 4 session placeholder files (`manager.ts`, `focus-model.ts`, `claude-runner.ts`, `shell-runner.ts`) instead of only 2
+
+**Acceptance**: All placeholder files promised in SPEC exist. Directory structure listings match actual files. Build passes.
+
+---
+
 ## Task Dependency Graph
 
 ```
@@ -219,6 +304,15 @@ End-to-end validation of the complete Phase 0.
  │
  ▼
 0J (Final Verification)
+ │
+ ▼
+0K (DeepWiki Corrections)
+ │
+ ▼
+0L (Full Phase Docs Alignment)
+ │
+ ▼
+0M (Missing Placeholders)
 ```
 
 **0D and 0H can run in parallel** after 0C is complete. Everything else is sequential.
@@ -227,16 +321,19 @@ End-to-end validation of the complete Phase 0.
 
 ## Summary
 
-| Sub-phase | Tasks  | Depends on | Description                               |
-| --------- | ------ | ---------- | ----------------------------------------- |
-| **0A**    | 6      | —          | Fork, clone, verify baseline build        |
-| **0B**    | 8      | 0A         | Rename/rebrand to JorchBot                |
-| **0C**    | 7      | 0B         | Disable unused modules                    |
-| **0D**    | 2      | 0C         | Error class hierarchy                     |
-| **0E**    | 4      | 0D         | Config system (zod + loader)              |
-| **0F**    | 4      | 0E         | SQLite + Drizzle ORM                      |
-| **0G**    | 5      | 0F         | CLI commands                              |
-| **0H**    | 2      | 0C         | Directory placeholders (parallel with 0D) |
-| **0I**    | 2      | 0G         | CI pipeline                               |
-| **0J**    | 2      | 0I + 0H    | Final verification + tag                  |
-| **Total** | **42** |            |                                           |
+| Sub-phase | Tasks  | Depends on | Description                                |
+| --------- | ------ | ---------- | ------------------------------------------ |
+| **0A**    | 6      | —          | Fork, clone, verify baseline build         |
+| **0B**    | 8      | 0A         | Rename/rebrand to JorchBot                 |
+| **0C**    | 7      | 0B         | Disable unused modules                     |
+| **0D**    | 2      | 0C         | Error class hierarchy                      |
+| **0E**    | 4      | 0D         | Config system (zod + loader)               |
+| **0F**    | 4      | 0E         | SQLite + Drizzle ORM                       |
+| **0G**    | 5      | 0F         | CLI commands                               |
+| **0H**    | 2      | 0C         | Directory placeholders (parallel with 0D)  |
+| **0I**    | 2      | 0G         | CI pipeline                                |
+| **0J**    | 2      | 0I + 0H    | Final verification + tag                   |
+| **0K**    | 13     | 0J         | DeepWiki architectural corrections         |
+| **0L**    | 11     | 0K         | Full phase docs alignment audit            |
+| **0M**    | 3      | 0L         | Missing placeholders & structure alignment |
+| **Total** | **69** |            |                                            |

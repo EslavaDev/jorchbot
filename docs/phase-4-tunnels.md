@@ -7,6 +7,16 @@
 
 ---
 
+## Nota Arquitectural (rev. 2 — DeepWiki)
+
+> **Decision**: Solo Tailscale (Serve + Funnel). No Cloudflare fallback.
+> Tailscale Serve (privado, tailnet) es el modo por defecto. Funnel (publico)
+> es opcional y requiere confirmacion explicita. Si Tailscale no esta disponible,
+> el usuario debe instalarlo — no hay fallback automatico.
+>
+> **Reusar de OpenClaw**: El gateway ya tiene `gateway.bind: "tailnet"` para
+> deteccion de Tailscale. Reusar esta logica para verificar disponibilidad.
+
 ## Objetivo
 
 Automatizar el flujo completo de: levantar dev server → detectar puerto →
@@ -20,10 +30,9 @@ crear tunnel Tailscale → enviar URL al chat. Todo privado por defecto (tailnet
 2. Tailscale Serve integration (privado, dentro del tailnet)
 3. Tailscale Funnel integration (publico, opcional)
 4. Reverse proxy para Funnel multi-proyecto
-5. Cloudflare Quick Tunnel como fallback
-6. Auto-URL al chat al levantar tunnel
-7. Comando `/tunnels` para ver estado
-8. Auto-tunnel para el webhook de Kapso
+5. Auto-URL al chat al levantar tunnel
+6. Comando `/tunnels` para ver estado
+7. Auto-tunnel para el webhook de Kapso
 
 ---
 
@@ -129,7 +138,7 @@ interface TunnelInfo {
 - [ ] O si el usuario ejecuta `/tunnel funnel <project>`
 - [ ] Pedir confirmacion antes de exponer a internet
 - [ ] Puertos permitidos: 443, 8443, 10000
-- [ ] Si los 3 estan ocupados, ofrecer Cloudflare como fallback
+- [ ] Si los 3 estan ocupados, mostrar error al usuario
 
 ```
 User: /tunnel funnel frontend
@@ -175,26 +184,10 @@ export class ReverseProxy {
 
 **Criterio de aceptacion**: `https://device.ts.net/frontend` proxea a localhost:3000.
 
-### 4.5 Cloudflare Quick Tunnel (Fallback)
-
-- [ ] Crear `src/tunnels/cloudflare.ts`
-- [ ] Verificar que `cloudflared` esta instalado
-- [ ] Ejecutar `cloudflared tunnel --url http://localhost:<port>`
-- [ ] Capturar URL random de stdout
-- [ ] Detener proceso al cerrar tunnel
-
-```
-[docs] ✓ Tunnel activo (Cloudflare):
-        https://random-adjective-noun.trycloudflare.com
-        (Cloudflare Quick Tunnel → localhost:4000)
-```
-
-**Criterio de aceptacion**: Si Tailscale no esta disponible, Cloudflare funciona como fallback.
-
-### 4.6 Tunnel Manager (orquestador)
+### 4.5 Tunnel Manager (orquestador)
 
 - [ ] Crear `src/tunnels/manager.ts`
-- [ ] Coordina Port Manager + Tailscale + Cloudflare + Reverse Proxy
+- [ ] Coordina Port Manager + Tailscale + Reverse Proxy
 - [ ] Flujo automatico en `/dev <project>`:
   1. Lee port del Jorchfile
   2. Verifica si esta libre → auto-assign si no
@@ -225,7 +218,7 @@ async function waitForServer(port: number, timeout: number = 30000): Promise<boo
 
 **Criterio de aceptacion**: `/dev frontend` hace todo el flujo automatico y envia URL al chat.
 
-### 4.7 Comando /tunnels
+### 4.6 Comando /tunnels
 
 ```
 User: /tunnels
@@ -248,7 +241,7 @@ Bot:  Tunnels activos:
 
 **Criterio de aceptacion**: `/tunnels` muestra estado completo.
 
-### 4.8 Auto-tunnel para webhook de Kapso
+### 4.7 Auto-tunnel para webhook de Kapso
 
 En fase 1, el webhook de Kapso requiere setup manual. Ahora lo automatizamos:
 
@@ -267,7 +260,6 @@ En fase 1, el webhook de Kapso requiere setup manual. Ahora lo automatizamos:
 - [ ] Dos proyectos con port 3000: el segundo obtiene 3001 automaticamente
 - [ ] Tailscale Serve funciona (privado, tailnet only)
 - [ ] Tailscale Funnel funciona (publico, con confirmacion)
-- [ ] Cloudflare funciona como fallback
 - [ ] `/tunnels` muestra estado completo
 - [ ] Tunnels se limpian al detener sesion
 - [ ] Webhook de Kapso tiene tunnel automatico

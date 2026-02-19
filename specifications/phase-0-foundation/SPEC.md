@@ -59,27 +59,27 @@ See sections 3-12 below for step-by-step implementation details.
 
 All decisions are confirmed. Do NOT deviate from these without explicit approval.
 
-| Aspect                       | Decision                                                                     | Source                                   |
-| ---------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------- |
-| **Language**                 | TypeScript (strict mode)                                                     | Inherited from OpenClaw                  |
-| **Module system**            | ESM (`"type": "module"`, `module: NodeNext`)                                 | Inherited from OpenClaw                  |
-| **Runtime**                  | Node.js >= 22.12.0                                                           | Inherited from OpenClaw                  |
-| **Package manager**          | pnpm 10.x (monorepo with workspaces)                                         | Inherited from OpenClaw                  |
-| **CLI framework**            | Commander (`commander@^14`)                                                  | Inherited from OpenClaw                  |
-| **Build tool**               | tsdown (based on Rolldown)                                                   | Inherited from OpenClaw                  |
-| **Testing**                  | Vitest (`vitest@^4`)                                                         | Inherited from OpenClaw                  |
-| **Linting**                  | oxlint (`--type-aware`)                                                      | Inherited from OpenClaw                  |
-| **Formatting**               | oxfmt (`--write`)                                                            | Inherited from OpenClaw                  |
-| **Logging**                  | OpenClaw's logging system (`src/logging/`)                                   | Inherited from OpenClaw                  |
-| **Validation (new schemas)** | zod@4                                                                        | New choice for JorchBot-specific schemas |
-| **Database**                 | SQLite via `better-sqlite3` + `drizzle-orm` + `drizzle-kit`                  | New — OpenClaw uses file-based storage   |
-| **DB file location**         | `~/.jorchbot/jorchbot.db`                                                    | New                                      |
-| **Config location**          | `~/.jorchbot/config.json`                                                    | New (OpenClaw uses `~/.openclaw/`)       |
-| **TypeScript target**        | `es2023`                                                                     | Inherited from OpenClaw                  |
-| **TypeScript strict**        | `true`                                                                       | Inherited from OpenClaw                  |
-| **GitHub repo**              | `porkycode/jorchbot`                                                         | Confirmed                                |
-| **Fork strategy**            | Git fork literal (preserve history for cherry-picks)                         | Confirmed                                |
-| **Disable strategy**         | Config-based for channels/extensions + build exclusion for apps/big features | Confirmed                                |
+| Aspect                       | Decision                                                                     | Source                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **Language**                 | TypeScript (strict mode)                                                     | Inherited from OpenClaw                                |
+| **Module system**            | ESM (`"type": "module"`, `module: NodeNext`)                                 | Inherited from OpenClaw                                |
+| **Runtime**                  | Node.js >= 22.12.0                                                           | Inherited from OpenClaw                                |
+| **Package manager**          | pnpm 10.x (monorepo with workspaces)                                         | Inherited from OpenClaw                                |
+| **CLI framework**            | Commander (`commander@^14`)                                                  | Inherited from OpenClaw                                |
+| **Build tool**               | tsdown (based on Rolldown)                                                   | Inherited from OpenClaw                                |
+| **Testing**                  | Vitest (`vitest@^4`)                                                         | Inherited from OpenClaw                                |
+| **Linting**                  | oxlint (`--type-aware`)                                                      | Inherited from OpenClaw                                |
+| **Formatting**               | oxfmt (`--write`)                                                            | Inherited from OpenClaw                                |
+| **Logging**                  | OpenClaw's logging system (`src/logging/`)                                   | Inherited from OpenClaw                                |
+| **Validation (new schemas)** | zod@4                                                                        | New choice for JorchBot-specific schemas               |
+| **Database**                 | SQLite via `better-sqlite3` + `drizzle-orm` + `drizzle-kit`                  | New — OpenClaw uses file-based storage                 |
+| **DB file location**         | `~/.jorchbot/jorchbot.db`                                                    | New                                                    |
+| **Config location**          | `~/.jorchbot/config.json`                                                    | New (OpenClaw uses `~/.openclaw/openclaw.json`, JSON5) |
+| **TypeScript target**        | `es2023`                                                                     | Inherited from OpenClaw                                |
+| **TypeScript strict**        | `true`                                                                       | Inherited from OpenClaw                                |
+| **GitHub repo**              | `porkycode/jorchbot`                                                         | Confirmed                                              |
+| **Fork strategy**            | Git fork literal (preserve history for cherry-picks)                         | Confirmed                                              |
+| **Disable strategy**         | Config-based for channels/extensions + build exclusion for apps/big features | Confirmed                                              |
 
 ---
 
@@ -688,7 +688,7 @@ function writeConfigFile(config: JorchBotConfig): void {
 
 ### 6.4 How JorchBot config interacts with OpenClaw config
 
-OpenClaw has its own config at `~/.openclaw/` (YAML format). JorchBot does NOT replace or modify OpenClaw's config system. Instead:
+OpenClaw has its own config at `~/.openclaw/openclaw.json` (JSON5 format, validated with Zod). JorchBot does NOT replace or modify OpenClaw's config system. Instead:
 
 1. OpenClaw's config system loads OpenClaw's config (unchanged)
 2. JorchBot's config loader (`loadConfig()`) loads JorchBot-specific config
@@ -893,21 +893,19 @@ src/
 ├── config/
 │   ├── jorchbot-config.ts       # NEW — JorchBot config schema (zod)
 │   └── jorchbot-config-loader.ts # NEW — Config loader
-├── channels/
-│   └── kapso/                   # NEW — Phase 1 placeholder
-│       └── index.ts             # TODO: Kapso WhatsApp adapter
+├── channels/                    # Channel registry (inherited from OpenClaw)
 ├── sessions/
-│   └── jorchbot/                # NEW — Phase 2 placeholder
-│       ├── manager.ts           # TODO: Session Manager
-│       ├── claude-runner.ts     # TODO: Claude Code headless
-│       └── shell-runner.ts      # TODO: Shell execution
+│   └── jorchbot/                # NEW — Phase 1-2 placeholder
+│       ├── manager.ts           # TODO: SessionManager (wrapper over OpenClaw agents RPC)
+│       ├── focus-model.ts       # TODO: Focus Model (active vs background session)
+│       ├── claude-runner.ts     # TODO: Claude Code headless subprocess
+│       └── shell-runner.ts      # TODO: Shell Runner (direct $ commands from WhatsApp)
 ├── jorchfile/                   # NEW — Phase 3 placeholder
 │   ├── parser.ts                # TODO: Jorchfile parser
 │   └── executor.ts              # TODO: Command executor
 ├── tunnels/                     # NEW — Phase 4 placeholder
 │   ├── manager.ts               # TODO: Tunnel Manager
 │   ├── tailscale.ts             # TODO: Tailscale integration
-│   ├── cloudflare.ts            # TODO: Cloudflare fallback
 │   └── port-manager.ts          # TODO: Port auto-discovery
 ├── approvals/                   # NEW — Phase 1 placeholder
 │   └── manager.ts               # TODO: Approval flow
@@ -915,7 +913,20 @@ src/
 │   └── chunker.ts               # TODO: Message splitting
 └── errors/                      # NEW — Phase 0
     └── index.ts                 # JorchBot error class hierarchy
+
+extensions/
+└── kapso/                       # NEW — Phase 1: WhatsApp channel plugin via Plugin SDK
+    ├── package.json             # Extension manifest (openclaw.extensions)
+    └── index.ts                 # TODO: Kapso channel plugin
 ```
+
+> **ARCHITECTURAL NOTE (rev. 2)**:
+>
+> - **Kapso** is a **channel plugin** in `extensions/kapso/` using OpenClaw's Plugin SDK. This inherits DM pairing, message chunking, access control for free.
+> - **Sessions** use OpenClaw's **native multi-agent** system (`agents.create/update/delete`). No custom SessionManager.
+> - **Shell execution** should consider OpenClaw's `exec` tool (BashProcessRegistry with timeouts, signals).
+> - **Focus Model** is the only new session concept (OpenClaw has no "focused session").
+> - **Tunnels** use **Tailscale only** (Serve and Funnel). No Cloudflare.
 
 ### 8.3 Placeholder file template
 
@@ -923,13 +934,14 @@ Each placeholder `index.ts` follows this pattern:
 
 ```typescript
 /**
- * @module channels/kapso
+ * @module extensions/kapso
  * @phase 1
- * @description WhatsApp channel adapter via Kapso.ai API
+ * @description WhatsApp channel plugin via Kapso.ai API (Plugin SDK)
  * @status placeholder
  */
 
-// This module will be implemented in Phase 1.
+// This module will be implemented in Phase 1 as a channel plugin.
+// Uses OpenClaw Plugin SDK — inherits DM pairing, chunking, access control.
 // See: docs/phase-1-single-session.md
 ```
 
@@ -1458,7 +1470,7 @@ openclaw/
 ├── src/                    # Core TypeScript source (~40 subdirs)
 │   ├── gateway/            # Express + ws server (port 18789)
 │   ├── cli/                # Commander CLI (build-program.ts, register*.ts)
-│   ├── config/             # YAML config loader
+│   ├── config/             # JSON5 config loader (Zod validated)
 │   ├── logging/            # Logging system
 │   ├── pairing/            # DM pairing auth
 │   ├── channels/           # Channel plugin registry

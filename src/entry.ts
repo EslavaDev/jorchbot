@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// IMPORTANT: jorchbot-env MUST be the first import — it aliases JORCHBOT_*
+// env vars to OPENCLAW_* and sets the default state dir to ~/.jorchbot
+// BEFORE any OpenClaw module reads process.env.
+import "./jorchbot-env.js";
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { applyCliProfileEnv, parseCliProfileArgs } from "./cli/profile.js";

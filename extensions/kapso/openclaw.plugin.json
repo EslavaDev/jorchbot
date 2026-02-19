@@ -1,0 +1,9 @@
+{
+  "id": "kapso",
+  "channels": ["kapso"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

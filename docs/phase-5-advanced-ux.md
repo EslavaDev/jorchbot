@@ -7,6 +7,16 @@
 
 ---
 
+## Nota Arquitectural (rev. 2 — DeepWiki)
+
+> **Sistemas existentes en OpenClaw que esta fase conecta a Kapso**:
+>
+> - **Auto-compaction**: Ya existe via `sessions.compact` RPC. Solo conectar al comando `/compact` y alertas de context %.
+> - **Tool approval**: Ya existe via `exec.ask` modes (`"off"`, `"on-miss"`, `"always"`). Los modos `confirm/plan/auto` de JorchBot mapean a estas configuraciones.
+> - **Message chunking**: OpenClaw ya tiene `textLimit` por canal (4096 default). El chunking basico se hereda del Plugin SDK.
+>
+> **Lo nuevo de esta fase**: Smart chunking avanzado (split por bloques de codigo, truncate + document), botones de Kapso para aprobaciones (Yes/Yes+feedback/No), listas interactivas, y el flujo de feedback.
+
 ## Objetivo
 
 Refinar la experiencia de usuario para que sea tan productiva como usar Claude Code

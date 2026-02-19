@@ -6,6 +6,26 @@
 
 ---
 
+## Revision Arquitectural (rev. 2 — DeepWiki)
+
+> Tras el analisis completo de OpenClaw via DeepWiki, se establecio una
+> **arquitectura de dos capas**:
+>
+> - **Capa 1 (reusar)**: Gateway, WebSocket, multi-agente, auto-compaction,
+>   tool policies, memory system, Plugin SDK, DM pairing, Control UI.
+> - **Capa 2 (construir)**: ClaudeRunner, Kapso channel plugin, Focus Model,
+>   ShellRunner, Jorchfile, context % tracking.
+>
+> **Cambios clave**:
+>
+> - Cloudflare eliminado — solo Tailscale (Serve/Funnel)
+> - Kapso debe ser plugin (`extensions/kapso/`) usando Plugin SDK
+> - SessionManager usa agentes nativos de OpenClaw, no reimplementa
+> - DM pairing (codigo 6 digitos) se reutiliza para auth de WP
+> - Config de OpenClaw es JSON5 (no YAML)
+>
+> Ver `docs/research.md` seccion 17 para el analisis completo.
+
 ## Vision General
 
 Cada fase es un **entregable funcional e independiente**. Al terminar cada fase,
