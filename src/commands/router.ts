@@ -17,6 +17,7 @@ export interface CommandRouterDeps {
   sendReply: (text: string) => Promise<void>;
   sendButtons: (text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>;
   getGatewayStatus: () => GatewayStatus;
+  skipPermissions?: boolean;
 }
 
 export interface GatewayStatus {
@@ -142,7 +143,11 @@ export class CommandRouter {
       if (runner.getSessionId()) {
         await runner.resume({ prompt: text, cwd: process.cwd() });
       } else {
-        await runner.start({ prompt: text, cwd: process.cwd() });
+        await runner.start({
+          prompt: text,
+          cwd: process.cwd(),
+          skipPermissions: this.deps.skipPermissions,
+        });
       }
     } catch (err: unknown) {
       await this.deps.sendReply(

@@ -13,11 +13,14 @@ describe("JorchBotConfigSchema", () => {
     expect(config.channels.kapso.phoneNumberId).toBe("");
     expect(config.channels.kapso.webhookVerifyToken).toBe("");
     expect(config.channels.kapso.webhookSecret).toBe("");
+    expect(config.channels.kapso.dmPolicy).toBe("pairing");
+    expect(config.channels.kapso.allowFrom).toEqual([]);
     expect(config.channels.telegram.enabled).toBe(false);
     expect(config.tunnels.defaultMode).toBe("serve");
     expect(config.tunnels.tailscale.enabled).toBe(true);
     expect(config.approvals.timeoutMinutes).toBe(10);
     expect(config.approvals.pauseTimeoutMinutes).toBe(60);
+    expect(config.approvals.skipPermissions).toBe(true);
   });
 
   it("accepts valid overrides", () => {

@@ -47,7 +47,7 @@ describe("ClaudeRunner", () => {
   });
 
   describe("start()", () => {
-    it("spawns claude with correct args", () => {
+    it("spawns claude with --dangerously-skip-permissions by default", () => {
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc as never);
 
@@ -55,11 +55,27 @@ describe("ClaudeRunner", () => {
 
       expect(mockSpawn).toHaveBeenCalledWith(
         "claude",
-        ["-p", "hello", "--output-format", "stream-json"],
+        ["-p", "hello", "--output-format", "stream-json", "--dangerously-skip-permissions"],
         expect.objectContaining({ cwd: "/tmp" }),
       );
 
       // Resolve by exiting cleanly
+      proc.emit("exit", 0, null);
+      return promise;
+    });
+
+    it("omits --dangerously-skip-permissions when skipPermissions is false", () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc as never);
+
+      const promise = runner.start({ prompt: "hello", cwd: "/tmp", skipPermissions: false });
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "claude",
+        ["-p", "hello", "--output-format", "stream-json"],
+        expect.objectContaining({ cwd: "/tmp" }),
+      );
+
       proc.emit("exit", 0, null);
       return promise;
     });

@@ -19,6 +19,8 @@ const KapsoSchema = z.object({
   phoneNumberId: z.string().default(""),
   webhookVerifyToken: z.string().default(""),
   webhookSecret: z.string().default(""),
+  dmPolicy: z.enum(["pairing", "allowlist", "open", "disabled"]).default("pairing"),
+  allowFrom: z.array(z.string()).default([]),
 });
 
 const TelegramSchema = z.object({
@@ -43,6 +45,9 @@ const TunnelsSchema = z.object({
 const ApprovalsSchema = z.object({
   timeoutMinutes: z.number().int().min(1).default(10),
   pauseTimeoutMinutes: z.number().int().min(1).default(60),
+  // Claude Code in headless mode (piped stdin) hangs without --dangerously-skip-permissions.
+  // Tool-level approval via WhatsApp buttons requires a different mechanism (Phase 2+).
+  skipPermissions: z.boolean().default(true),
 });
 
 export const JorchBotConfigSchema = z.object({

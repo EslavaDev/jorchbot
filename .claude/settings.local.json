@@ -101,7 +101,9 @@
       "Bash(git stash:*)",
       "Bash(pnpm format:*)",
       "Bash(git -C /Users/porkycode/Documents/porky/jj status --short)",
-      "WebFetch(domain:docs.kapso.ai)"
+      "WebFetch(domain:docs.kapso.ai)",
+      "Bash(pnpm check:*)",
+      "Bash(npx tsgo:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

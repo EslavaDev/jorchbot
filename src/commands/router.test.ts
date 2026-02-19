@@ -114,16 +114,14 @@ describe("CommandRouter", () => {
     it("calls runner.start for first message", async () => {
       const mockRunner = {
         getSessionId: vi.fn(() => null),
-        start: vi
-          .fn()
-          .mockResolvedValue({
-            sessionId: "s1",
-            textContent: "ok",
-            inputTokens: 0,
-            outputTokens: 0,
-            costUsd: 0,
-            durationMs: 0,
-          }),
+        start: vi.fn().mockResolvedValue({
+          sessionId: "s1",
+          textContent: "ok",
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          durationMs: 0,
+        }),
         resume: vi.fn(),
         getStatus: vi.fn(() => "idle"),
       };
@@ -150,16 +148,14 @@ describe("CommandRouter", () => {
       const mockRunner = {
         getSessionId: vi.fn(() => "sess_abc"),
         start: vi.fn(),
-        resume: vi
-          .fn()
-          .mockResolvedValue({
-            sessionId: "sess_abc",
-            textContent: "ok",
-            inputTokens: 0,
-            outputTokens: 0,
-            costUsd: 0,
-            durationMs: 0,
-          }),
+        resume: vi.fn().mockResolvedValue({
+          sessionId: "sess_abc",
+          textContent: "ok",
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          durationMs: 0,
+        }),
         getStatus: vi.fn(() => "idle"),
       };
 

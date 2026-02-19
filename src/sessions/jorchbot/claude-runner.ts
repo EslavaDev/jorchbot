@@ -97,14 +97,15 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
     systemPrompt?: string;
     allowedTools?: string[];
     timeoutMs?: number;
+    skipPermissions?: boolean;
   }): Promise<ClaudeRunnerResult> {
-    const args = [
-      "-p",
-      options.prompt,
-      "--output-format",
-      "stream-json",
-      "--dangerously-skip-permissions",
-    ];
+    const args = ["-p", options.prompt, "--output-format", "stream-json"];
+
+    // Claude Code hangs in headless mode without this flag (piped stdin blocks).
+    // Tool-level approval via WhatsApp buttons requires a different mechanism (Phase 2+).
+    if (options.skipPermissions !== false) {
+      args.push("--dangerously-skip-permissions");
+    }
 
     if (options.systemPrompt) {
       args.push("--append-system-prompt", options.systemPrompt);
@@ -114,7 +115,7 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
       args.push("--allowedTools", options.allowedTools.join(","));
     }
 
-    return this.run(args, options.cwd, options.timeoutMs);
+    return this.run(args, options.cwd, options.timeoutMs, options.skipPermissions !== false);
   }
 
   async resume(options: {
@@ -189,16 +190,24 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
     this.readline = null;
   }
 
-  private async run(args: string[], cwd: string, timeoutMs?: number): Promise<ClaudeRunnerResult> {
+  private async run(
+    args: string[],
+    cwd: string,
+    timeoutMs?: number,
+    skipPermissions = true,
+  ): Promise<ClaudeRunnerResult> {
     this.accumulatedText = "";
     this.status = "running";
 
     return new Promise<ClaudeRunnerResult>((resolve, reject) => {
       try {
         const nodeOptions = process.env.NODE_OPTIONS ?? "";
+        // stdin: "ignore" when permissions are skipped (no need to write to stdin).
+        // stdin: "pipe" when we need to send approval responses (Phase 2+).
+        const stdinMode = skipPermissions ? "ignore" : ("pipe" as const);
         this.process = spawn(CLAUDE_BINARY, args, {
           cwd,
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: [stdinMode, "pipe", "pipe"],
           env: {
             ...process.env,
             NODE_OPTIONS: nodeOptions ? `${nodeOptions} --no-warnings` : "--no-warnings",

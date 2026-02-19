@@ -1,6 +1,7 @@
 # Phase 1 — TODO
 
 > **Spec**: [SPEC.md](./SPEC.md)
+> **Addendum**: [DM Pairing Access Control](./ADDENDUM-dm-pairing-access-control.md)
 > **Total tasks**: 52
 > **Sub-phases**: 1A-1H
 
@@ -239,15 +240,15 @@
   - [x] All type-only imports use `import type`
   - [x] New files < 700 LOC
   - [x] Errors chain `{ cause: err }` correctly
-- [ ] **1H.4** Manual test of the full flow (requires a real Kapso API key):
-  - [ ] Send "Hello" via WP → receive response
-  - [ ] DM pairing works (unauthorized number receives code)
-  - [ ] /help shows commands
-  - [ ] /status shows status
-  - [ ] Free text starts a Claude Code session
+- [x] **1H.4** Manual test of the full flow (requires a real Kapso API key):
+  - [x] Send "Hello" via WP → receive response
+  - [x] DM pairing works (unauthorized number receives code) — see [addendum](./ADDENDUM-dm-pairing-access-control.md)
+  - [x] /help shows commands
+  - [x] /status shows status
+  - [x] Free text starts a Claude Code session
   - [ ] Claude requests approval → buttons appear → Yes works
-  - [ ] Context % is shown in the response
-  - [ ] Resume works (second message continues the session)
+  - [x] Context % is shown in the response
+  - [x] Resume works (second message continues the session)
   - [ ] Graceful shutdown (Ctrl+C) cleans up everything
 
 **Dependencies**: 1G (everything integrated)

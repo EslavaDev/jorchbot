@@ -9,6 +9,7 @@ import { JorchBotError } from "../errors/index.js";
 import { ApprovalManager } from "../sessions/jorchbot/approval-manager.js";
 import { ClaudeRunner } from "../sessions/jorchbot/claude-runner.js";
 import { formatContextUsage, calculateContextUsage } from "../sessions/jorchbot/context-tracker.js";
+import { checkKapsoAccess } from "./kapso-access-control.js";
 
 interface StartOptions {
   port?: string;
@@ -46,6 +47,7 @@ export async function startGateway(opts: StartOptions): Promise<void> {
 
     const router = new CommandRouter({
       claudeRunner,
+      skipPermissions: config.approvals.skipPermissions,
       sendReply: async (text) => {
         if (!currentSenderPhone) {
           return;
@@ -113,6 +115,15 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       onMessage: async (message, senderPhone) => {
         console.log("[jorchbot] message received from:", senderPhone, "text:", message.text?.body);
         currentSenderPhone = senderPhone;
+
+        const access = await checkKapsoAccess(senderPhone, kapsoConfig);
+        if (!access.allowed) {
+          if (access.pairingMessage) {
+            await kapsoClient.sendText({ to: senderPhone, body: access.pairingMessage });
+          }
+          return;
+        }
+
         await router.route({
           text: message.text?.body ?? "",
           senderId: senderPhone,
