@@ -80,3 +80,28 @@ export class ShellRunnerTimeoutError extends JorchBotError {}
 
 /** Dangerous shell command detected (used internally, not thrown to user) */
 export class ShellRunnerDangerousCommandError extends JorchBotError {}
+
+// --- Jorchfile errors (Phase 3) ---
+
+/** Jorchfile has syntax errors or malformed format */
+export class JorchfileParseError extends JorchBotError {}
+
+/** Jorchfile validation failed (missing required fields like path) */
+export class JorchfileValidationError extends JorchBotError {}
+
+/** Project not found in Jorchfile */
+export class JorchfileProjectNotFoundError extends JorchBotError {}
+
+/** Command not found for a project in Jorchfile */
+export class JorchfileCommandNotFoundError extends JorchBotError {}
+
+/** Failed to read or parse a project's Makefile */
+export class MakefileReadError extends JorchBotError {}
+
+// --- Background task errors (Phase 3) ---
+
+/** Background task (long-running command) failed to start */
+export class BackgroundTaskStartError extends JorchBotError {}
+
+/** Background task not found by PID or name */
+export class BackgroundTaskNotFoundError extends JorchBotError {}

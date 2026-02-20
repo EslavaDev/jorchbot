@@ -62,14 +62,23 @@ describe("ApprovalManager", () => {
     expect(buttons[1].title).toBe("No");
   });
 
-  it("resolveApproval(id, true) updates DB to approved", async () => {
-    await manager.requestApproval({
+  it("requestApproval returns the approval ID", async () => {
+    const approvalId = await manager.requestApproval({
       toolUseId: "toolu_1",
       toolName: "Bash",
       toolInput: { command: "ls" },
     });
 
-    const approvalId = JSON.parse(sendButtons.mock.calls[0][1][0].id).approvalId;
+    expect(typeof approvalId).toBe("string");
+    expect(approvalId.length).toBeGreaterThan(0);
+  });
+
+  it("resolveApproval(id, true) updates DB to approved", async () => {
+    const approvalId = await manager.requestApproval({
+      toolUseId: "toolu_1",
+      toolName: "Bash",
+      toolInput: { command: "ls" },
+    });
 
     const result = await manager.resolveApproval(approvalId, true);
 
@@ -79,13 +88,11 @@ describe("ApprovalManager", () => {
   });
 
   it("resolveApproval(id, false) updates DB to rejected", async () => {
-    await manager.requestApproval({
+    const approvalId = await manager.requestApproval({
       toolUseId: "toolu_1",
       toolName: "Edit",
       toolInput: { file_path: "/src/index.ts" },
     });
-
-    const approvalId = JSON.parse(sendButtons.mock.calls[0][1][0].id).approvalId;
 
     const result = await manager.resolveApproval(approvalId, false);
 
@@ -111,14 +118,86 @@ describe("ApprovalManager", () => {
     expect(manager.hasPending()).toBe(true);
   });
 
-  it("summarizeInput shows command for Bash tool", async () => {
-    await manager.requestApproval({
-      toolUseId: "toolu_1",
-      toolName: "Bash",
-      toolInput: { command: "npm test" },
+  describe("getApprovalStatus", () => {
+    it("returns 'pending' for unresolved approval", async () => {
+      const approvalId = await manager.requestApproval({
+        toolUseId: "toolu_1",
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+      });
+
+      expect(manager.getApprovalStatus(approvalId)).toBe("pending");
     });
 
-    const text = sendButtons.mock.calls[0][0];
-    expect(text).toContain("npm test");
+    it("returns 'approved' after approval", async () => {
+      const approvalId = await manager.requestApproval({
+        toolUseId: "toolu_1",
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+      });
+
+      await manager.resolveApproval(approvalId, true);
+
+      expect(manager.getApprovalStatus(approvalId)).toBe("approved");
+    });
+
+    it("returns 'denied' after rejection", async () => {
+      const approvalId = await manager.requestApproval({
+        toolUseId: "toolu_1",
+        toolName: "Edit",
+        toolInput: { file_path: "src/main.ts" },
+      });
+
+      await manager.resolveApproval(approvalId, false);
+
+      expect(manager.getApprovalStatus(approvalId)).toBe("denied");
+    });
+
+    it("returns null for unknown ID", () => {
+      expect(manager.getApprovalStatus("unknown")).toBeNull();
+    });
+  });
+
+  describe("tool message formatting", () => {
+    it("formats Edit tool with diff", async () => {
+      await manager.requestApproval({
+        toolUseId: "toolu_1",
+        toolName: "Edit",
+        toolInput: {
+          file_path: "src/main.ts",
+          old_string: "const port = 3000;",
+          new_string: "const port = process.env.PORT ?? 3000;",
+        },
+      });
+
+      const text = sendButtons.mock.calls[0][0];
+      expect(text).toContain("Edit: src/main.ts");
+      expect(text).toContain("- const port = 3000;");
+      expect(text).toContain("+ const port = process.env.PORT ?? 3000;");
+    });
+
+    it("formats Bash tool with command", async () => {
+      await manager.requestApproval({
+        toolUseId: "toolu_1",
+        toolName: "Bash",
+        toolInput: { command: "pnpm test", description: "Run test suite" },
+      });
+
+      const text = sendButtons.mock.calls[0][0];
+      expect(text).toContain("Bash: pnpm test");
+      expect(text).toContain("Run test suite");
+    });
+
+    it("formats Write tool with file path", async () => {
+      await manager.requestApproval({
+        toolUseId: "toolu_1",
+        toolName: "Write",
+        toolInput: { file_path: "new-file.ts", content: "export const x = 1;" },
+      });
+
+      const text = sendButtons.mock.calls[0][0];
+      expect(text).toContain("Write: new-file.ts");
+      expect(text).toContain("export const x = 1;");
+    });
   });
 });

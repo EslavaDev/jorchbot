@@ -299,12 +299,117 @@ describe("ClaudeRunner", () => {
 
       expect(mockSpawn).toHaveBeenLastCalledWith(
         "claude",
-        ["-p", "continue", "--resume", "sess_abc", "--output-format", "stream-json"],
+        [
+          "-p",
+          "continue",
+          "--resume",
+          "sess_abc",
+          "--output-format",
+          "stream-json",
+          "--dangerously-skip-permissions",
+        ],
         expect.objectContaining({ cwd: "/tmp" }),
       );
 
       proc2.emit("exit", 0, null);
       return resumePromise;
+    });
+
+    it("includes --dangerously-skip-permissions when start() used it", async () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc as never);
+
+      // Start with default skipPermissions (true)
+      const startPromise = runner.start({ prompt: "init", cwd: "/tmp" });
+
+      feedLine(proc, { type: "system", subtype: "init", session_id: "sess_perm" });
+      await vi.advanceTimersByTimeAsync(0);
+
+      proc.emit("exit", 0, null);
+      await startPromise;
+
+      // Resume should also include the flag
+      const proc2 = createMockProcess();
+      mockSpawn.mockReturnValue(proc2 as never);
+
+      const resumePromise = runner.resume({ prompt: "next", cwd: "/tmp" });
+
+      expect(mockSpawn).toHaveBeenLastCalledWith(
+        "claude",
+        expect.arrayContaining(["--dangerously-skip-permissions"]),
+        expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+      );
+
+      proc2.emit("exit", 0, null);
+      return resumePromise;
+    });
+
+    it("omits --dangerously-skip-permissions on resume when start() did not use it", async () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc as never);
+
+      // Start with skipPermissions: false
+      const startPromise = runner.start({ prompt: "init", cwd: "/tmp", skipPermissions: false });
+
+      feedLine(proc, { type: "system", subtype: "init", session_id: "sess_noperm" });
+      await vi.advanceTimersByTimeAsync(0);
+
+      proc.emit("exit", 0, null);
+      await startPromise;
+
+      // Resume should also omit the flag
+      const proc2 = createMockProcess();
+      mockSpawn.mockReturnValue(proc2 as never);
+
+      const resumePromise = runner.resume({ prompt: "next", cwd: "/tmp" });
+
+      const spawnArgs = mockSpawn.mock.lastCall![1] as string[];
+      expect(spawnArgs).not.toContain("--dangerously-skip-permissions");
+
+      // stdin should be "pipe" since skipPermissions is false
+      expect(mockSpawn).toHaveBeenLastCalledWith(
+        "claude",
+        expect.any(Array),
+        expect.objectContaining({ stdio: ["pipe", "pipe", "pipe"] }),
+      );
+
+      proc2.emit("exit", 0, null);
+      return resumePromise;
+    });
+  });
+
+  describe("constructor options", () => {
+    it("defaults to 200K context limit when no args", () => {
+      const r = new ClaudeRunner();
+      expect(r.getContextLimit()).toBe(200_000);
+    });
+
+    it("accepts custom context limit", () => {
+      const r = new ClaudeRunner({ contextLimit: 100_000 });
+      expect(r.getContextLimit()).toBe(100_000);
+    });
+
+    it("uses custom limit for getContextPercent()", async () => {
+      const customRunner = new ClaudeRunner({ contextLimit: 100_000 });
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc as never);
+
+      const promise = customRunner.start({ prompt: "test", cwd: "/tmp" });
+
+      feedLine(proc, {
+        type: "result",
+        session_id: "sess_custom",
+        usage: { input_tokens: 50_000, output_tokens: 25_000 },
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      proc.emit("exit", 0, null);
+      await promise;
+
+      // 75K / 100K = 75%
+      expect(customRunner.getContextPercent()).toBe(75);
+      await customRunner.stop();
     });
   });
 

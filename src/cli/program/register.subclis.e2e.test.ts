@@ -52,24 +52,18 @@ describe("registerSubCliCommands", () => {
   });
 
   it("registers only the primary placeholder and dispatches", async () => {
-    process.argv = ["node", "jorchbot", "acp"];
-    const program = new Command();
-    registerSubCliCommands(program, process.argv);
-    const program = createRegisteredProgram(["node", "openclaw", "acp"]);
+    const program = createRegisteredProgram(["node", "jorchbot", "acp"]);
 
     expect(program.commands.map((cmd) => cmd.name())).toEqual(["acp"]);
 
-    await program.parseAsync(process.argv);
+    await program.parseAsync(["node", "jorchbot", "acp"]);
 
     expect(registerAcpCli).toHaveBeenCalledTimes(1);
     expect(acpAction).toHaveBeenCalledTimes(1);
   });
 
   it("registers placeholders for all subcommands when no primary", () => {
-    process.argv = ["node", "jorchbot"];
-    const program = new Command();
-    registerSubCliCommands(program, process.argv);
-    const program = createRegisteredProgram(["node", "openclaw"]);
+    const program = createRegisteredProgram(["node", "jorchbot"]);
 
     const names = program.commands.map((cmd) => cmd.name());
     expect(names).toContain("acp");
@@ -79,11 +73,7 @@ describe("registerSubCliCommands", () => {
   });
 
   it("re-parses argv for lazy subcommands", async () => {
-    process.argv = ["node", "jorchbot", "nodes", "list"];
-    const program = new Command();
-    program.name("jorchbot");
-    registerSubCliCommands(program, process.argv);
-    const program = createRegisteredProgram(["node", "openclaw", "nodes", "list"], "openclaw");
+    const program = createRegisteredProgram(["node", "jorchbot", "nodes", "list"], "jorchbot");
 
     expect(program.commands.map((cmd) => cmd.name())).toEqual(["nodes"]);
 
@@ -94,7 +84,7 @@ describe("registerSubCliCommands", () => {
   });
 
   it("replaces placeholder when registering a subcommand by name", async () => {
-    const program = createRegisteredProgram(["node", "openclaw", "acp", "--help"], "openclaw");
+    const program = createRegisteredProgram(["node", "jorchbot", "acp", "--help"], "jorchbot");
 
     await registerSubCliByName(program, "acp");
 

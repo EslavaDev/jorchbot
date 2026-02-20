@@ -140,3 +140,15 @@ export interface ApprovalButtonPayload {
   approvalId: string;
   action: "approve" | "reject";
 }
+
+export interface QuestionAnswerPayload {
+  type: "question_answer";
+  project: string;
+  answer: string;
+}
+
+export type ButtonPayload =
+  | ApprovalButtonPayload
+  | QuestionAnswerPayload
+  | { type: "shell_approve"; command: string; project: string }
+  | { type: "shell_reject"; command: string; project: string };

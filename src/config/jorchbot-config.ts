@@ -50,9 +50,17 @@ const ApprovalsSchema = z.object({
   skipPermissions: z.boolean().default(true),
 });
 
+const ContextGuardSchema = z.object({
+  warnPercent: z.number().int().min(1).max(100).default(70),
+  criticalPercent: z.number().int().min(1).max(100).default(90),
+  blockPercent: z.number().int().min(1).max(100).default(95),
+  contextLimit: z.number().int().min(1000).default(200_000),
+});
+
 export const SessionsSchema = z.object({
   maxConcurrent: z.number().int().min(1).max(20).default(5),
   shellTimeout: z.number().int().min(1000).default(30_000),
+  contextGuard: ContextGuardSchema.default(ContextGuardSchema.parse({})),
 });
 
 /**

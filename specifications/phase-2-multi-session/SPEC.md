@@ -45,13 +45,23 @@ This phase converts the single-session model into a **multi-session workspace sy
 
 The SessionManager is the central orchestrator for multi-session. It uses a **hybrid architecture**:
 
-- **Layer 1 (reuse)**: Registers each session as an OpenClaw agent in `~/.jorchbot/jorchbot.json` (under the `agents` key) so it appears in the Control UI, is recognized by OpenClaw's agent system, and inherits tool policies and session management
+- **Layer 1 (reuse)**: Registers each session as an OpenClaw agent in `~/.jorchbot/jorchbot.json` (under the `agents` key) so it appears in the Control UI. Creates agent directory structure (`~/.jorchbot/agents/{project}/`) with IDENTITY.md and transcript directories.
 - **Layer 2 (new)**: Manages `ClaudeRunner` instances directly, since OpenClaw has no concept of Claude Code as a subprocess. Config for sessions (maxConcurrent, shellTimeout) lives under `jorchbot.sessions` in the same `jorchbot.json` file (see section 3.6)
+
+> **Architecture Note (rev. 4 — 2026-02-19)**: The original research (section 17) recommended
+> reusing OpenClaw's multi-agent RPC (`agents.create/update/delete`) directly. After analysis,
+> this was deemed impractical because Pi Agent RPC operates via API keys → LLM APIs, while
+> ClaudeRunner uses the host's Claude subscription as a subprocess. The runtime lifecycle is
+> fundamentally different. Instead, SessionManager is custom Layer 2 code that **registers**
+> sessions as OpenClaw agents (for Control UI visibility, transcripts, and identity) while
+> managing ClaudeRunner processes directly. The `ClaudeRunner` interface is designed to be
+> abstracted into a generic `AgentRunner` in Phase 8 (Multi-LLM) to support Gemini, Codex, etc.
+> See `docs/future_agent_runner.md` for the full abstraction roadmap.
 
 **Responsibilities**:
 
-- Create sessions: write agent config + spawn ClaudeRunner
-- Destroy sessions: kill ClaudeRunner + remove agent config + clean DB
+- Create sessions: spawn ClaudeRunner + write DB + register as OpenClaw agent
+- Destroy sessions: stop ClaudeRunner + update DB + unregister agent
 - List sessions: combine agent config with JorchBot DB state
 - Restore sessions on gateway restart (re-read DB, reconnect to existing Claude Code sessions)
 - Enforce max concurrent sessions limit (default: 5, configurable)

@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { ShellRunnerTimeoutError } from "../../errors/index.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_OUTPUT_LENGTH = 4096; // WhatsApp message limit
+const MAX_OUTPUT_LENGTH = 16_384; // Reasonable limit; sendReply handles WhatsApp chunking
 
 /**
  * Patterns that indicate dangerous commands.

@@ -394,6 +394,7 @@ export const OpenClawSchema = z
     gateway: z
       .object({
         port: z.number().int().positive().optional(),
+        host: z.string().optional(),
         mode: z.union([z.literal("local"), z.literal("remote")]).optional(),
         bind: z
           .union([
@@ -663,6 +664,7 @@ export const OpenClawSchema = z
       })
       .strict()
       .optional(),
+    jorchbot: z.unknown().optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {

@@ -6,6 +6,7 @@ import {
   ClaudeRunnerTimeoutError,
   ClaudeRunnerProcessError,
 } from "../../errors/index.js";
+import { DEFAULT_CONTEXT_LIMIT } from "./context-guard.js";
 
 interface ClaudeStreamEvent {
   type: string;
@@ -32,6 +33,7 @@ interface ClaudeStreamEvent {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   };
+  result?: string;
   cost_usd?: number;
   duration_ms?: number;
 }
@@ -63,17 +65,23 @@ export type ClaudeRunnerStatus = "idle" | "running" | "stopped" | "error";
 const CLAUDE_BINARY = "claude";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const KILL_TIMEOUT_MS = 5_000;
-const MODEL_CONTEXT_LIMIT = 200_000;
 
 export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private sessionId: string | null = null;
   private status: ClaudeRunnerStatus = "idle";
+  private skipPermissions = true;
   private accumulatedText = "";
   private lastInputTokens = 0;
   private lastOutputTokens = 0;
   private timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  private contextLimit: number;
+
+  constructor(options?: { contextLimit?: number }) {
+    super();
+    this.contextLimit = options?.contextLimit ?? DEFAULT_CONTEXT_LIMIT;
+  }
 
   getSessionId(): string | null {
     return this.sessionId;
@@ -83,12 +91,20 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
     return this.status;
   }
 
+  getTokenCounts(): { input: number; output: number } {
+    return { input: this.lastInputTokens, output: this.lastOutputTokens };
+  }
+
   getContextPercent(): number {
     const total = this.lastInputTokens + this.lastOutputTokens;
     if (total === 0) {
       return 0;
     }
-    return Math.min(100, Math.round((total / MODEL_CONTEXT_LIMIT) * 100));
+    return Math.min(100, Math.round((total / this.contextLimit) * 100));
+  }
+
+  getContextLimit(): number {
+    return this.contextLimit;
   }
 
   async start(options: {
@@ -99,11 +115,12 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
     timeoutMs?: number;
     skipPermissions?: boolean;
   }): Promise<ClaudeRunnerResult> {
+    this.skipPermissions = options.skipPermissions !== false;
     const args = ["-p", options.prompt, "--output-format", "stream-json"];
 
     // Claude Code hangs in headless mode without this flag (piped stdin blocks).
     // Tool-level approval via WhatsApp buttons requires a different mechanism (Phase 2+).
-    if (options.skipPermissions !== false) {
+    if (this.skipPermissions) {
       args.push("--dangerously-skip-permissions");
     }
 
@@ -136,7 +153,11 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
       "stream-json",
     ];
 
-    return this.run(args, options.cwd, options.timeoutMs);
+    if (this.skipPermissions) {
+      args.push("--dangerously-skip-permissions");
+    }
+
+    return this.run(args, options.cwd, options.timeoutMs, this.skipPermissions);
   }
 
   async stop(): Promise<void> {
@@ -193,6 +214,8 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
           env: {
             ...process.env,
             NODE_OPTIONS: nodeOptions ? `${nodeOptions} --no-warnings` : "--no-warnings",
+            // Hook scripts check this to avoid firing for non-JorchBot Claude instances.
+            JORCHBOT_ACTIVE: "1",
           },
         });
       } catch (err: unknown) {
@@ -322,6 +345,13 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
       }
 
       case "result": {
+        // Slash commands (e.g. /usage, /plan) return text in event.result
+        // instead of as assistant text blocks. Capture it so it's not lost.
+        if (event.result && !this.accumulatedText) {
+          this.accumulatedText = event.result;
+          this.emit("text", event.result);
+        }
+
         if (event.usage) {
           const newInputTokens =
             event.usage.input_tokens +

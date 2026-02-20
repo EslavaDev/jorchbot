@@ -53,8 +53,12 @@ function processKapsoEvent(event: KapsoEventPayload, deps: WebhookHandlerDeps): 
   const msg = event.message;
   const promises: Promise<void>[] = [];
 
-  if (msg.type === "interactive" && msg.interactive?.button_reply) {
-    promises.push(deps.onButtonReply(msg.interactive.button_reply.id, senderPhone));
+  if (msg.type === "interactive") {
+    if (msg.interactive?.button_reply) {
+      promises.push(deps.onButtonReply(msg.interactive.button_reply.id, senderPhone));
+    } else if (msg.interactive?.list_reply) {
+      promises.push(deps.onButtonReply(msg.interactive.list_reply.id, senderPhone));
+    }
   } else if (msg.type === "text" && msg.text?.body) {
     promises.push(deps.onMessage(toIncomingMessage(msg, senderPhone), senderPhone));
   }
@@ -147,8 +151,12 @@ export function createWebhookHandlers(deps: WebhookHandlerDeps): WebhookHandlers
 
           const messages = change.value.messages ?? [];
           for (const msg of messages) {
-            if (msg.type === "interactive" && msg.interactive?.button_reply) {
-              await deps.onButtonReply(msg.interactive.button_reply.id, msg.from);
+            if (msg.type === "interactive") {
+              if (msg.interactive?.button_reply) {
+                await deps.onButtonReply(msg.interactive.button_reply.id, msg.from);
+              } else if (msg.interactive?.list_reply) {
+                await deps.onButtonReply(msg.interactive.list_reply.id, msg.from);
+              }
             } else if (msg.type === "text" && msg.text?.body) {
               await deps.onMessage(msg, msg.from);
             }

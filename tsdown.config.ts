@@ -45,6 +45,14 @@ export default defineConfig([
     fixedExtension: false,
     platform: "node",
   },
+  // JorchBot hook scripts — standalone processes invoked by Claude Code PreToolUse/PostToolUse
+  {
+    entry: ["src/hooks/jorchbot/tool-approval.ts", "src/hooks/jorchbot/tool-result.ts"],
+    outDir: "dist/hooks/jorchbot",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
   // JorchBot: disabled entries (re-enable as needed)
   // Extension API — disabled: extensions workspace excluded
   // {
@@ -53,7 +61,7 @@ export default defineConfig([
   //   fixedExtension: false,
   //   platform: "node",
   // },
-  // Hooks — disabled: not needed in Phase 0
+  // OpenClaw bundled hooks — disabled: not needed in Phase 0
   // {
   //   entry: ["src/hooks/bundled/*/handler.ts", "src/hooks/llm-slug-generator.ts"],
   //   env,

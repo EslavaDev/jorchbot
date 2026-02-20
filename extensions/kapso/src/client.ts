@@ -64,6 +64,35 @@ export class KapsoClient {
     });
   }
 
+  async sendList(options: {
+    to: string;
+    body: string;
+    buttonText: string;
+    sections: Array<{
+      title: string;
+      rows: Array<{ id: string; title: string; description?: string }>;
+    }>;
+  }): Promise<KapsoSendResult> {
+    const totalRows = options.sections.reduce((sum, s) => sum + s.rows.length, 0);
+    if (totalRows > 10) {
+      throw new KapsoClientError(`WhatsApp list limited to 10 rows, got ${totalRows}`);
+    }
+    return this.post("/messages", {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: options.to,
+      type: "interactive",
+      interactive: {
+        type: "list",
+        body: { text: options.body },
+        action: {
+          button: options.buttonText,
+          sections: options.sections,
+        },
+      },
+    });
+  }
+
   async sendDocument(options: {
     to: string;
     documentUrl: string;
