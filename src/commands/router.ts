@@ -1,3 +1,7 @@
+import type { JorchfileExecutor } from "../jorchfile/executor.js";
+import type { readMakefileTargets as ReadMakefileTargetsFn } from "../jorchfile/makefile-reader.js";
+import type { BackgroundTaskManager } from "../jorchfile/task-manager.js";
+import { formatUptime } from "../jorchfile/task-manager.js";
 import type { SessionManager, ActiveSession } from "../sessions/jorchbot/manager.js";
 import type { ShellRunner } from "../sessions/jorchbot/shell-runner.js";
 
@@ -20,20 +24,27 @@ export interface CommandRouterDeps {
   shellRunner: ShellRunner;
   sendReply: (text: string) => Promise<void>;
   sendButtons: (text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>;
+  /** Getter function for hot-reload: returns null if no Jorchfile loaded */
+  getJorchfileExecutor?: () => JorchfileExecutor | null;
+  taskManager?: BackgroundTaskManager;
+  readMakefileTargets?: typeof ReadMakefileTargetsFn;
 }
 
 export class CommandRouter {
   private deps: CommandRouterDeps;
+  /** Current sender phone — set per route() call, used by handlers for session lookups. */
+  private currentSenderId: string = "";
 
   constructor(deps: CommandRouterDeps) {
     this.deps = deps;
   }
 
   async route(message: IncomingMessage): Promise<void> {
+    this.currentSenderId = message.senderId;
     const parsed = this.parse(message.text);
 
     // Log inbound message
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (focused) {
       const type =
         parsed.type === "shell"
@@ -104,7 +115,7 @@ export class CommandRouter {
     }
 
     // Free text → prompt to focused session
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (!focused) {
       return {
         type: "error",
@@ -116,80 +127,135 @@ export class CommandRouter {
   }
 
   private async handleCommand(command: string, args: string[]): Promise<void> {
+    // --- Tier 1: Built-in commands ---
     switch (command) {
       // Session commands
       case "new":
         await this.handleNew(args);
-        break;
+        return;
       case "switch":
         await this.handleSwitch(args);
-        break;
+        return;
       case "list":
         await this.handleList();
-        break;
+        return;
       case "stop":
         await this.handleStop(args);
-        break;
+        return;
       case "logs":
         await this.handleLogs(args);
-        break;
+        return;
       case "compact":
         await this.handleCompact(args);
-        break;
+        return;
 
-      // Shell shortcuts
-      case "ls":
-        await this.handleShell(`ls -la ${args.join(" ")}`.trim());
-        break;
-      case "cat":
-        await this.handleShell(`cat ${args.join(" ")}`.trim());
-        break;
-      case "grep":
-        await this.handleShell(`grep -rn ${args.join(" ")}`.trim());
-        break;
-      case "pwd":
-        await this.handleShell("pwd");
-        break;
-      case "git":
-        await this.handleShell(`git ${args.join(" ")}`.trim());
-        break;
-      case "tree":
-        await this.handleShell(`tree -L ${args[0] ?? "3"}`.trim());
-        break;
+      // Phase 3: Jorchfile commands
+      case "projects":
+        await this.handleProjects();
+        return;
+      case "tasks":
+        await this.handleTasks();
+        return;
+      case "stop-cmd":
+        await this.handleStopCmd(args);
+        return;
+      case "make":
+        await this.handleMake(args);
+        return;
 
-      // Phase 1 commands
+      // General
       case "help":
         await this.handleHelp();
-        break;
+        return;
       case "status":
         await this.handleStatus();
-        break;
-
-      default:
-        await this.deps.sendReply(
-          `Unknown command: /${command}\nUse /help to see available commands.`,
-        );
+        return;
     }
+
+    // --- Tier 2: Jorchfile dynamic commands ---
+    const executor = this.deps.getJorchfileExecutor?.();
+    if (executor?.hasCommand(command)) {
+      // Parse trailing & for background
+      let forceBackground = false;
+      let projectName: string | undefined = args[0];
+      const lastArg = args.at(-1);
+      if (lastArg === "&") {
+        forceBackground = true;
+        projectName = args.length > 1 ? args[0] : undefined;
+      } else if (projectName?.endsWith("&")) {
+        forceBackground = true;
+        projectName = projectName.slice(0, -1) || undefined;
+      }
+
+      await executor.execute(command, projectName, forceBackground, this.currentSenderId);
+      return;
+    }
+
+    // --- Tier 3: Shell shortcuts ---
+    switch (command) {
+      case "ls":
+        await this.handleShell(`ls -la ${args.join(" ")}`.trim());
+        return;
+      case "cat":
+        await this.handleShell(`cat ${args.join(" ")}`.trim());
+        return;
+      case "grep":
+        await this.handleShell(`grep -rn ${args.join(" ")}`.trim());
+        return;
+      case "pwd":
+        await this.handleShell("pwd");
+        return;
+      case "git":
+        await this.handleShell(`git ${args.join(" ")}`.trim());
+        return;
+      case "tree":
+        await this.handleShell(`tree -L ${args[0] ?? "3"}`.trim());
+        return;
+    }
+
+    // --- Tier 4: Unknown command ---
+    await this.deps.sendReply(`Unknown command: /${command}\nUse /help to see available commands.`);
   }
 
   private async handleNew(args: string[]): Promise<void> {
     const [project, ...pathParts] = args;
     if (!project) {
-      await this.deps.sendReply("Usage: /new <project> <path>");
+      await this.deps.sendReply("Usage: /new <project> [path]");
       return;
     }
 
-    const projectPath = pathParts.join(" ") || process.cwd();
+    // Check Jorchfile first
+    const executor = this.deps.getJorchfileExecutor?.();
+    const jorchProject = executor?.getProject(project);
+    const explicitPath = pathParts.join(" ").trim();
+
+    let projectPath: string;
+    let systemPrompt: string | undefined;
+    let fromJorchfile = false;
+
+    if (jorchProject && !explicitPath) {
+      projectPath = jorchProject.path;
+      systemPrompt = jorchProject.instructions;
+      fromJorchfile = true;
+    } else if (explicitPath) {
+      projectPath = explicitPath;
+    } else {
+      await this.deps.sendReply(
+        `Project "${project}" not found in Jorchfile and no path provided.\nUsage: /new <project> <path>`,
+      );
+      return;
+    }
 
     try {
-      const session = await this.deps.sessionManager.create({
-        project,
-        path: projectPath,
-      });
+      const session = await this.deps.sessionManager.create(
+        { project, path: projectPath, systemPrompt },
+        this.currentSenderId,
+      );
 
+      const tag = fromJorchfile ? " (from Jorchfile)" : "";
       await this.deps.sendReply(
         [
-          `[${project}] Session created`,
+          `[${project}] Session created${tag}`,
           `Path: ${session.path}`,
           `Mode: ${session.mode}+${session.outputMode}`,
           `Context: ${session.contextPercent}%`,
@@ -210,7 +276,7 @@ export class CommandRouter {
     }
 
     try {
-      await this.deps.sessionManager.switchFocus(project);
+      await this.deps.sessionManager.switchFocus(project, this.currentSenderId);
       const session = this.deps.sessionManager.getByProject(project);
       const contextPercent = session?.runner.getContextPercent() ?? 0;
       await this.deps.sendReply(`[${project}] Session focused\nContext: ${contextPercent}%`);
@@ -222,7 +288,7 @@ export class CommandRouter {
   }
 
   private async handleList(): Promise<void> {
-    const activeSessions = this.deps.sessionManager.listActive();
+    const activeSessions = this.deps.sessionManager.listActive(this.currentSenderId);
 
     if (activeSessions.length === 0) {
       await this.deps.sendReply("No active sessions. Use /new <project> <path> to create one.");
@@ -245,6 +311,13 @@ export class CommandRouter {
     const [project] = args;
     if (!project) {
       await this.deps.sendReply("Usage: /stop <project>");
+      return;
+    }
+
+    // Check ownership
+    const session = this.deps.sessionManager.getByProject(project);
+    if (session && session.ownerPhone !== this.currentSenderId) {
+      await this.deps.sendReply(`Session "${project}" belongs to another user.`);
       return;
     }
 
@@ -311,7 +384,7 @@ export class CommandRouter {
   }
 
   private async handleShell(command: string): Promise<void> {
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (!focused) {
       await this.deps.sendReply("No active session. Use /new <project> <path> first.");
       return;
@@ -376,7 +449,7 @@ export class CommandRouter {
   }
 
   private async handleClaudeCompact(): Promise<void> {
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (!focused) {
       await this.deps.sendReply("No active session. Use /new <project> <path> first.");
       return;
@@ -386,7 +459,7 @@ export class CommandRouter {
   }
 
   private async handleClaudeClear(): Promise<void> {
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (!focused) {
       await this.deps.sendReply("No active session. Use /new <project> <path> first.");
       return;
@@ -397,10 +470,10 @@ export class CommandRouter {
 
       // Reset session ID so next prompt starts fresh
       await this.deps.sessionManager.destroy(focused.project);
-      const session = await this.deps.sessionManager.create({
-        project: focused.project,
-        path: focused.path,
-      });
+      const session = await this.deps.sessionManager.create(
+        { project: focused.project, path: focused.path },
+        this.currentSenderId,
+      );
 
       await this.deps.sendReply(
         `[${focused.project}] Session cleared. New session: ${session.id.slice(0, 8)}`,
@@ -413,7 +486,7 @@ export class CommandRouter {
   }
 
   private async handleClaudeUsage(): Promise<void> {
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (!focused) {
       await this.deps.sendReply("No active session. Use /new <project> <path> first.");
       return;
@@ -439,7 +512,7 @@ export class CommandRouter {
   }
 
   private async handleClaudeContext(): Promise<void> {
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (!focused) {
       await this.deps.sendReply("No active session. Use /new <project> <path> first.");
       return;
@@ -473,7 +546,7 @@ export class CommandRouter {
   }
 
   private async forwardToClaudeCode(command: string, args: string[]): Promise<void> {
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (!focused) {
       await this.deps.sendReply("No active session. Use /new <project> <path> first.");
       return;
@@ -501,17 +574,174 @@ export class CommandRouter {
     }
   }
 
+  private async handleProjects(): Promise<void> {
+    const executor = this.deps.getJorchfileExecutor?.();
+    if (!executor) {
+      await this.deps.sendReply("No Jorchfile loaded.");
+      return;
+    }
+
+    const jorchfile = executor.getJorchfile();
+    if (jorchfile.projects.length === 0) {
+      await this.deps.sendReply("Jorchfile loaded but has no projects.");
+      return;
+    }
+
+    const lines = ["*Jorchfile projects:*", ""];
+    for (const project of jorchfile.projects) {
+      const session = this.deps.sessionManager.getByProject(project.name);
+      const cmds = Object.keys(project.commands).join(", ") || "(none)";
+
+      let sessionStatus: string;
+      if (session) {
+        const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
+        const isFocused = focused?.project === project.name;
+        const contextPercent = session.runner.getContextPercent();
+        const icon = isFocused ? "●" : "○";
+        const tag = isFocused ? "focused" : "background";
+        sessionStatus = `${icon} active (${tag}, ${contextPercent}%)`;
+      } else {
+        sessionStatus = "no session";
+      }
+
+      const taskList = this.deps.taskManager?.listByProject(project.name) ?? [];
+      const tasksInfo =
+        taskList.length > 0
+          ? taskList
+              .map((t) => `${t.commandName} (PID ${t.pid}${t.port ? `, port ${t.port}` : ""})`)
+              .join(", ")
+          : "-";
+
+      lines.push(`*${project.name}* (${project.path})`);
+      lines.push(`  Commands: ${cmds}`);
+      lines.push(`  Session: ${sessionStatus}`);
+      lines.push(`  Tasks: ${tasksInfo}`);
+      lines.push("");
+    }
+
+    await this.deps.sendReply(lines.join("\n"));
+  }
+
+  private async handleTasks(): Promise<void> {
+    const taskManager = this.deps.taskManager;
+    if (!taskManager) {
+      await this.deps.sendReply("Background task manager not available.");
+      return;
+    }
+
+    const tasks = taskManager.listAll();
+    if (tasks.length === 0) {
+      await this.deps.sendReply("No background tasks running.");
+      return;
+    }
+
+    const lines = ["*Background tasks:*", ""];
+    for (const task of tasks) {
+      const uptime = formatUptime(task.startedAt);
+      const portInfo = task.port ? ` port ${task.port}` : "";
+      lines.push(`PID ${task.pid} | ${task.project} | ${task.commandName} | ${uptime}${portInfo}`);
+    }
+
+    await this.deps.sendReply(lines.join("\n"));
+  }
+
+  private async handleStopCmd(args: string[]): Promise<void> {
+    const [project, commandName] = args;
+    if (!project) {
+      await this.deps.sendReply("Usage: /stop-cmd <project> [command]");
+      return;
+    }
+
+    const taskManager = this.deps.taskManager;
+    const executor = this.deps.getJorchfileExecutor?.();
+    if (!taskManager) {
+      await this.deps.sendReply("Background task manager not available.");
+      return;
+    }
+
+    if (commandName) {
+      // Get task port BEFORE stopping (for tunnel cleanup)
+      const tasks = taskManager.listByProject(project);
+      const task = tasks.find((t) => t.commandName === commandName);
+      const port = task?.port;
+
+      try {
+        taskManager.stop(project, commandName);
+        if (port && executor) {
+          await executor.stopTunnel(project, port);
+        }
+        await this.deps.sendReply(`[${project}] Stopped "${commandName}".`);
+      } catch (err: unknown) {
+        await this.deps.sendReply(
+          `[${project}] ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else {
+      const killed = taskManager.stopAll(project);
+      if (executor) {
+        await executor.stopAllTunnels(project);
+      }
+      await this.deps.sendReply(
+        `[${project}] Stopped ${killed} background task${killed !== 1 ? "s" : ""}.`,
+      );
+    }
+  }
+
+  private async handleMake(args: string[]): Promise<void> {
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
+    if (!focused) {
+      await this.deps.sendReply("No active session. Use /new <project> <path> first.");
+      return;
+    }
+
+    const target = args[0];
+    const readTargets = this.deps.readMakefileTargets;
+
+    if (!target) {
+      // List targets
+      if (!readTargets) {
+        await this.deps.sendReply("Makefile reader not available.");
+        return;
+      }
+      try {
+        const targets = readTargets(focused.path);
+        if (targets.length === 0) {
+          await this.deps.sendReply(`[${focused.project}] No Makefile found.`);
+        } else {
+          await this.deps.sendReply(
+            `[${focused.project}] Makefile targets:\n${targets.join(", ")}`,
+          );
+        }
+      } catch (err: unknown) {
+        await this.deps.sendReply(
+          `[${focused.project}] ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return;
+    }
+
+    // Execute target
+    await this.executeShell(`make ${target}`, focused);
+  }
+
   private async handleHelp(): Promise<void> {
     const help = [
       "*JorchBot Commands:*",
       "",
       "*Sessions:*",
-      "/new <project> <path> — Create a new session",
+      "/new <project> [path] — Create session (from Jorchfile or path)",
       "/switch <project> — Switch focused session",
       "/list — List all sessions",
       "/stop <project> — Stop a session",
       "/logs <project> [n] — Last n messages (default: 20)",
       "/compact <project> — Compact context window",
+      "",
+      "*Jorchfile:*",
+      "/projects — List all Jorchfile projects",
+      "/tasks — List background tasks",
+      "/stop-cmd <project> [cmd] — Stop background task(s)",
+      "/make [target] — List or run Makefile targets",
+      "/<command> [project] — Run Jorchfile command",
       "",
       "*Shell:*",
       "$ <command> — Execute shell command",
@@ -540,8 +770,8 @@ export class CommandRouter {
   }
 
   private async handleStatus(): Promise<void> {
-    const activeSessions = this.deps.sessionManager.listActive();
-    const focused = this.deps.sessionManager.getFocused();
+    const activeSessions = this.deps.sessionManager.listActive(this.currentSenderId);
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
 
     const lines = ["*JorchBot Status*", ""];
 
@@ -558,7 +788,7 @@ export class CommandRouter {
   }
 
   private async handlePrompt(text: string): Promise<void> {
-    const focused = this.deps.sessionManager.getFocused();
+    const focused = this.deps.sessionManager.getFocused(this.currentSenderId);
     if (!focused) {
       await this.deps.sendReply("No active session. Use /new <project> <path> to create one.");
       return;

@@ -30,6 +30,7 @@ function createMockRunner() {
       durationMs: 0,
     }),
     stop: vi.fn().mockResolvedValue(undefined),
+    setEnv: vi.fn(),
     on: vi.fn(),
     emit: vi.fn(),
   };
@@ -54,9 +55,12 @@ async function fetchJson(
   return { status: resp.status, body: data };
 }
 
+const PHONE = "+521234567890";
+
 describe("Approval API", () => {
-  type SendReplyFn = (text: string) => Promise<void>;
-  type SendButtonsFn = (
+  type SendReplyToFn = (phone: string, text: string) => Promise<void>;
+  type SendButtonsToFn = (
+    phone: string,
     text: string,
     buttons: Array<{ id: string; title: string }>,
   ) => Promise<void>;
@@ -64,26 +68,26 @@ describe("Approval API", () => {
   let tempDir: string;
   let server: http.Server;
   let sessionManager: SessionManager;
-  let sendReply: ReturnType<typeof vi.fn<SendReplyFn>>;
-  let sendButtons: ReturnType<typeof vi.fn<SendButtonsFn>>;
+  let sendReplyTo: ReturnType<typeof vi.fn<SendReplyToFn>>;
+  let sendButtonsTo: ReturnType<typeof vi.fn<SendButtonsToFn>>;
   const originalDbPath = process.env.JORCHBOT_DB_PATH;
 
   beforeEach(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jorchbot-approval-api-test-"));
     process.env.JORCHBOT_DB_PATH = path.join(tempDir, "test.db");
 
-    sendReply = vi.fn<SendReplyFn>().mockResolvedValue(undefined);
-    sendButtons = vi.fn<SendButtonsFn>().mockResolvedValue(undefined);
+    sendReplyTo = vi.fn<SendReplyToFn>().mockResolvedValue(undefined);
+    sendButtonsTo = vi.fn<SendButtonsToFn>().mockResolvedValue(undefined);
 
     sessionManager = new SessionManager({
-      sendReply,
-      sendButtons,
+      sendReplyTo,
+      sendButtonsTo,
       createRunner: () => createMockRunner() as never,
     });
 
     const app = express();
     app.use(express.json());
-    app.use(createApprovalRouter({ sessionManager, sendReply }));
+    app.use(createApprovalRouter({ sessionManager, sendReplyTo }));
 
     await new Promise<void>((resolve) => {
       server = app.listen(0, "127.0.0.1", () => resolve());
@@ -105,7 +109,10 @@ describe("Approval API", () => {
 
   describe("POST /api/tool-approval", () => {
     it("creates pending approval and returns ID", async () => {
-      const session = await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      const session = await sessionManager.create(
+        { project: "frontend", path: "/tmp/frontend" },
+        PHONE,
+      );
 
       const res = await fetchJson(server, "POST", "/api/tool-approval", {
         sessionId: session.id,
@@ -139,7 +146,10 @@ describe("Approval API", () => {
 
   describe("GET /api/tool-approval/:id", () => {
     it("returns pending status for new approval", async () => {
-      const session = await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      const session = await sessionManager.create(
+        { project: "frontend", path: "/tmp/frontend" },
+        PHONE,
+      );
 
       const createRes = await fetchJson(server, "POST", "/api/tool-approval", {
         sessionId: session.id,
@@ -155,7 +165,10 @@ describe("Approval API", () => {
     });
 
     it("returns approved after resolution", async () => {
-      const session = await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      const session = await sessionManager.create(
+        { project: "frontend", path: "/tmp/frontend" },
+        PHONE,
+      );
 
       const createRes = await fetchJson(server, "POST", "/api/tool-approval", {
         sessionId: session.id,
@@ -173,7 +186,10 @@ describe("Approval API", () => {
     });
 
     it("returns denied after rejection", async () => {
-      const session = await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      const session = await sessionManager.create(
+        { project: "frontend", path: "/tmp/frontend" },
+        PHONE,
+      );
 
       const createRes = await fetchJson(server, "POST", "/api/tool-approval", {
         sessionId: session.id,
@@ -198,9 +214,12 @@ describe("Approval API", () => {
 
   describe("POST /api/tool-result", () => {
     it("sends result notification", async () => {
-      const session = await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      const session = await sessionManager.create(
+        { project: "frontend", path: "/tmp/frontend" },
+        PHONE,
+      );
 
-      sendReply.mockClear();
+      sendReplyTo.mockClear();
       const res = await fetchJson(server, "POST", "/api/tool-result", {
         sessionId: session.id,
         toolName: "Edit",
@@ -210,6 +229,8 @@ describe("Approval API", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
+      expect(sendReplyTo).toHaveBeenCalledTimes(1);
+      expect(sendReplyTo.mock.calls[0][0]).toBe(PHONE);
     });
 
     it("returns 400 for missing fields", async () => {

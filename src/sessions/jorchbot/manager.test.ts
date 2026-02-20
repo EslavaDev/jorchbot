@@ -14,6 +14,9 @@ import { SessionManager } from "./manager.js";
 
 // --- Mock ClaudeRunner ---
 
+const PHONE_A = "+1111111";
+const PHONE_B = "+2222222";
+
 interface ClaudeRunnerEvents {
   text: [text: string];
   toolUse: [request: { toolUseId: string; toolName: string; toolInput: Record<string, unknown> }];
@@ -64,6 +67,10 @@ class MockClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
     this.outputTokens = outputTokens;
   }
 
+  setEnv(_env: Record<string, string>): void {
+    // no-op in tests
+  }
+
   async start(): Promise<{
     sessionId: string;
     textContent: string;
@@ -110,13 +117,18 @@ class MockClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
 // --- Test helpers ---
 
 function createTestManager(opts?: { maxSessions?: number }) {
-  const sendReply = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
-  const sendButtons = vi
-    .fn<(text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>>()
+  const sendReplyTo = vi
+    .fn<(phone: string, text: string) => Promise<void>>()
     .mockResolvedValue(undefined);
-  const sendList = vi
+  const sendButtonsTo = vi
+    .fn<
+      (phone: string, text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>
+    >()
+    .mockResolvedValue(undefined);
+  const sendListTo = vi
     .fn<
       (
+        phone: string,
         text: string,
         buttonText: string,
         options: Array<{ id: string; title: string; description?: string }>,
@@ -128,16 +140,16 @@ function createTestManager(opts?: { maxSessions?: number }) {
 
   const manager = new SessionManager({
     maxSessions: opts?.maxSessions,
-    sendReply,
-    sendButtons,
-    sendList,
+    sendReplyTo,
+    sendButtonsTo,
+    sendListTo,
     createRunner: () => {
       lastRunner = new MockClaudeRunner();
       return lastRunner as unknown as ClaudeRunner;
     },
   });
 
-  return { manager, sendReply, sendButtons, sendList, getLastRunner: () => lastRunner };
+  return { manager, sendReplyTo, sendButtonsTo, sendListTo, getLastRunner: () => lastRunner };
 }
 
 describe("SessionManager", () => {
@@ -162,65 +174,68 @@ describe("SessionManager", () => {
   describe("create()", () => {
     it("creates a session with DB record and runner", async () => {
       const { manager } = createTestManager();
-      const session = await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const session = await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
 
       expect(session.project).toBe("frontend");
       expect(session.status).toBe("active");
+      expect(session.ownerPhone).toBe(PHONE_A);
       expect(session.contextPercent).toBe(0);
     });
 
-    it("auto-focuses the first session created", async () => {
+    it("auto-focuses the first session created for an owner", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
 
-      const focused = manager.getFocused();
+      const focused = manager.getFocused(PHONE_A);
       expect(focused).not.toBeNull();
       expect(focused!.project).toBe("frontend");
 
       // DB should also reflect focused state
-      const records = manager.listActive();
+      const records = manager.listActive(PHONE_A);
       expect(records[0].focused).toBe(true);
     });
 
-    it("does not change focus when creating subsequent sessions", async () => {
+    it("does not change focus when creating subsequent sessions for same owner", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
-      await manager.create({ project: "backend", path: "/tmp/backend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_A);
 
-      expect(manager.getFocused()!.project).toBe("frontend");
+      expect(manager.getFocused(PHONE_A)!.project).toBe("frontend");
     });
 
     it("throws SessionLimitError when max sessions reached", async () => {
       const { manager } = createTestManager({ maxSessions: 2 });
-      await manager.create({ project: "a", path: "/tmp/a" });
-      await manager.create({ project: "b", path: "/tmp/b" });
+      await manager.create({ project: "a", path: "/tmp/a" }, PHONE_A);
+      await manager.create({ project: "b", path: "/tmp/b" }, PHONE_A);
 
-      await expect(manager.create({ project: "c", path: "/tmp/c" })).rejects.toThrow(
+      await expect(manager.create({ project: "c", path: "/tmp/c" }, PHONE_A)).rejects.toThrow(
         SessionLimitError,
       );
     });
 
     it("throws SessionAlreadyExistsError for duplicate project names", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
 
-      await expect(manager.create({ project: "frontend", path: "/tmp/other" })).rejects.toThrow(
-        SessionAlreadyExistsError,
-      );
+      await expect(
+        manager.create({ project: "frontend", path: "/tmp/other" }, PHONE_A),
+      ).rejects.toThrow(SessionAlreadyExistsError);
     });
 
     it("validates project name format", async () => {
       const { manager } = createTestManager();
 
-      await expect(manager.create({ project: "bad project!", path: "/tmp/x" })).rejects.toThrow();
+      await expect(
+        manager.create({ project: "bad project!", path: "/tmp/x" }, PHONE_A),
+      ).rejects.toThrow();
     });
 
     it("accepts valid project names with hyphens and underscores", async () => {
       const { manager } = createTestManager();
-      const session = await manager.create({
-        project: "my-project_v2",
-        path: "/tmp/proj",
-      });
+      const session = await manager.create(
+        { project: "my-project_v2", path: "/tmp/proj" },
+        PHONE_A,
+      );
       expect(session.project).toBe("my-project_v2");
     });
   });
@@ -228,7 +243,7 @@ describe("SessionManager", () => {
   describe("destroy()", () => {
     it("stops runner and updates DB status to stopped", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       await manager.destroy("frontend");
 
       const allSessions = manager.list();
@@ -236,21 +251,21 @@ describe("SessionManager", () => {
       expect(allSessions[0].status).toBe("stopped");
     });
 
-    it("auto-focuses next session when focused session is destroyed", async () => {
+    it("auto-focuses next session of same owner when focused session is destroyed", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
-      await manager.create({ project: "backend", path: "/tmp/backend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_A);
       await manager.destroy("frontend");
 
-      expect(manager.getFocused()!.project).toBe("backend");
+      expect(manager.getFocused(PHONE_A)!.project).toBe("backend");
     });
 
-    it("clears focus when last session is destroyed", async () => {
+    it("clears focus when last session of owner is destroyed", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       await manager.destroy("frontend");
 
-      expect(manager.getFocused()).toBeNull();
+      expect(manager.getFocused(PHONE_A)).toBeNull();
     });
 
     it("throws SessionNotFoundError for unknown project", async () => {
@@ -261,23 +276,23 @@ describe("SessionManager", () => {
   });
 
   describe("switchFocus()", () => {
-    it("changes the focused session", async () => {
+    it("changes the focused session for a phone", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
-      await manager.create({ project: "backend", path: "/tmp/backend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_A);
 
-      await manager.switchFocus("backend");
-      expect(manager.getFocused()!.project).toBe("backend");
+      await manager.switchFocus("backend", PHONE_A);
+      expect(manager.getFocused(PHONE_A)!.project).toBe("backend");
     });
 
     it("updates focused flag in DB", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
-      await manager.create({ project: "backend", path: "/tmp/backend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_A);
 
-      await manager.switchFocus("backend");
+      await manager.switchFocus("backend", PHONE_A);
 
-      const records = manager.listActive();
+      const records = manager.listActive(PHONE_A);
       const frontend = records.find((s) => s.project === "frontend");
       const backend = records.find((s) => s.project === "backend");
       expect(frontend!.focused).toBe(false);
@@ -286,30 +301,105 @@ describe("SessionManager", () => {
 
     it("throws SessionNotFoundError for unknown project", async () => {
       const { manager } = createTestManager();
-      await expect(manager.switchFocus("nonexistent")).rejects.toThrow(SessionNotFoundError);
+      await expect(manager.switchFocus("nonexistent", PHONE_A)).rejects.toThrow(
+        SessionNotFoundError,
+      );
+    });
+
+    it("throws SessionNotFoundError when switching to another owner's session", async () => {
+      const { manager } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+
+      await expect(manager.switchFocus("frontend", PHONE_B)).rejects.toThrow(SessionNotFoundError);
     });
   });
 
   describe("list()", () => {
     it("returns all sessions including stopped", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
-      await manager.create({ project: "backend", path: "/tmp/backend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_A);
       await manager.destroy("backend");
 
       const all = manager.list();
       expect(all).toHaveLength(2);
 
-      const active = manager.listActive();
+      const active = manager.listActive(PHONE_A);
       expect(active).toHaveLength(1);
       expect(active[0].project).toBe("frontend");
+    });
+  });
+
+  describe("owner isolation", () => {
+    it("each owner has independent focus", async () => {
+      const { manager } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_B);
+
+      expect(manager.getFocused(PHONE_A)!.project).toBe("frontend");
+      expect(manager.getFocused(PHONE_B)!.project).toBe("backend");
+    });
+
+    it("listActive filters by ownerPhone", async () => {
+      const { manager } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_B);
+
+      const phoneASessions = manager.listActive(PHONE_A);
+      expect(phoneASessions).toHaveLength(1);
+      expect(phoneASessions[0].project).toBe("frontend");
+
+      const phoneBSessions = manager.listActive(PHONE_B);
+      expect(phoneBSessions).toHaveLength(1);
+      expect(phoneBSessions[0].project).toBe("backend");
+    });
+
+    it("listActive without filter returns all", async () => {
+      const { manager } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_B);
+
+      const all = manager.listActive();
+      expect(all).toHaveLength(2);
+    });
+
+    it("destroying one owner's session does not affect other's focus", async () => {
+      const { manager } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.create({ project: "backend", path: "/tmp/backend" }, PHONE_B);
+      await manager.destroy("frontend");
+
+      expect(manager.getFocused(PHONE_A)).toBeNull();
+      expect(manager.getFocused(PHONE_B)!.project).toBe("backend");
+    });
+
+    it("async events go to ownerPhone not other phones", async () => {
+      const { manager, sendReplyTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      const runner = getLastRunner()!;
+
+      runner.emit("result", {
+        sessionId: "s1",
+        textContent: "Done.",
+        inputTokens: 100,
+        outputTokens: 50,
+        costUsd: 0,
+        durationMs: 0,
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // All sends should target PHONE_A
+      for (const call of sendReplyTo.mock.calls) {
+        expect(call[0]).toBe(PHONE_A);
+      }
     });
   });
 
   describe("getByProject()", () => {
     it("returns the active session or null", async () => {
       const { manager } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
 
       expect(manager.getByProject("frontend")).not.toBeNull();
       expect(manager.getByProject("nonexistent")).toBeNull();
@@ -319,8 +409,8 @@ describe("SessionManager", () => {
   describe("restore()", () => {
     it("restores active sessions from DB", async () => {
       const { manager: manager1 } = createTestManager();
-      await manager1.create({ project: "frontend", path: "/tmp/frontend" });
-      await manager1.create({ project: "backend", path: "/tmp/backend" });
+      await manager1.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager1.create({ project: "backend", path: "/tmp/backend" }, PHONE_A);
 
       // Create a new manager (simulating restart) using the same DB
       const { manager: manager2 } = createTestManager();
@@ -330,13 +420,13 @@ describe("SessionManager", () => {
       expect(manager2.getByProject("frontend")).not.toBeNull();
       expect(manager2.getByProject("backend")).not.toBeNull();
       // Focus should be restored from DB
-      expect(manager2.getFocused()!.project).toBe("frontend");
+      expect(manager2.getFocused(PHONE_A)!.project).toBe("frontend");
     });
 
     it("skips stopped sessions", async () => {
       const { manager: manager1 } = createTestManager();
-      await manager1.create({ project: "frontend", path: "/tmp/frontend" });
-      await manager1.create({ project: "backend", path: "/tmp/backend" });
+      await manager1.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager1.create({ project: "backend", path: "/tmp/backend" }, PHONE_A);
       await manager1.destroy("backend");
 
       const { manager: manager2 } = createTestManager();
@@ -358,8 +448,8 @@ describe("SessionManager", () => {
 
   describe("question detection on result", () => {
     it("sends yes/no buttons when result is a yes/no question", async () => {
-      const { manager, sendButtons, sendReply, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendButtonsTo, sendReplyTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.emit("result", {
@@ -371,10 +461,10 @@ describe("SessionManager", () => {
         durationMs: 0,
       });
 
-      // Allow microtask queue to flush
       await new Promise((r) => setTimeout(r, 10));
 
-      expect(sendButtons).toHaveBeenCalledWith(
+      expect(sendButtonsTo).toHaveBeenCalledWith(
+        PHONE_A,
         "[frontend] Do you want to continue?",
         expect.arrayContaining([
           expect.objectContaining({ title: "Sí" }),
@@ -382,12 +472,13 @@ describe("SessionManager", () => {
         ]),
       );
       // "Completed" message should NOT be sent
-      expect(sendReply).not.toHaveBeenCalledWith(expect.stringContaining("Completed"));
+      const textCalls = sendReplyTo.mock.calls.map((c) => c[1]);
+      expect(textCalls.some((c) => c.includes("Completed"))).toBe(false);
     });
 
     it("sends buttons for multi-option (<=3) questions", async () => {
-      const { manager, sendButtons, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendButtonsTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.emit("result", {
@@ -401,7 +492,8 @@ describe("SessionManager", () => {
 
       await new Promise((r) => setTimeout(r, 10));
 
-      expect(sendButtons).toHaveBeenCalledWith(
+      expect(sendButtonsTo).toHaveBeenCalledWith(
+        PHONE_A,
         "[frontend] Which approach?",
         expect.arrayContaining([
           expect.objectContaining({ title: "Refactor" }),
@@ -412,8 +504,8 @@ describe("SessionManager", () => {
     });
 
     it("sends list for multi-option (>3) questions", async () => {
-      const { manager, sendList, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendListTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.emit("result", {
@@ -427,7 +519,8 @@ describe("SessionManager", () => {
 
       await new Promise((r) => setTimeout(r, 10));
 
-      expect(sendList).toHaveBeenCalledWith(
+      expect(sendListTo).toHaveBeenCalledWith(
+        PHONE_A,
         "[frontend] Which one?",
         "Options",
         expect.arrayContaining([
@@ -440,8 +533,8 @@ describe("SessionManager", () => {
     });
 
     it("sends normal Completed message for non-questions", async () => {
-      const { manager, sendReply, sendButtons, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendReplyTo, sendButtonsTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.emit("result", {
@@ -455,10 +548,11 @@ describe("SessionManager", () => {
 
       await new Promise((r) => setTimeout(r, 10));
 
-      expect(sendReply).toHaveBeenCalledWith(expect.stringContaining("Completed"));
-      // sendButtons should only have been called for the approval manager,
-      // not for question detection
-      expect(sendButtons).not.toHaveBeenCalledWith(
+      const textCalls = sendReplyTo.mock.calls.map((c) => c[1]);
+      expect(textCalls.some((c) => c.includes("Completed"))).toBe(true);
+      // sendButtonsTo should not have been called for question detection
+      expect(sendButtonsTo).not.toHaveBeenCalledWith(
+        expect.anything(),
         expect.stringContaining("frontend"),
         expect.arrayContaining([expect.objectContaining({ title: "Sí" })]),
       );
@@ -468,10 +562,9 @@ describe("SessionManager", () => {
   describe("answerQuestion()", () => {
     it("resumes runner with the answer", async () => {
       const { manager, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
-      // Simulate a start so runner has a session ID
       await runner.start();
       const resumeSpy = vi.spyOn(runner, "resume");
 
@@ -482,13 +575,12 @@ describe("SessionManager", () => {
 
     it("does nothing for unknown project", async () => {
       const { manager } = createTestManager();
-      // Should not throw
       await manager.answerQuestion("nonexistent", "Sí");
     });
 
     it("blocks when context is at block level", async () => {
-      const { manager, sendReply, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendReplyTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       await runner.start();
@@ -498,12 +590,13 @@ describe("SessionManager", () => {
       await manager.answerQuestion("frontend", "Sí");
 
       expect(resumeSpy).not.toHaveBeenCalled();
-      expect(sendReply).toHaveBeenCalledWith(expect.stringContaining("limit reached"));
+      const textCalls = sendReplyTo.mock.calls.map((c) => c[1]);
+      expect(textCalls.some((c) => c.includes("limit reached"))).toBe(true);
     });
 
     it("allows when context is at critical but not block", async () => {
       const { manager, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       await runner.start();
@@ -518,8 +611,8 @@ describe("SessionManager", () => {
 
   describe("context guard integration", () => {
     it("sends warn message at 75% context", async () => {
-      const { manager, sendReply, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendReplyTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.setContextState(75, 130_000, 20_000);
@@ -534,13 +627,13 @@ describe("SessionManager", () => {
 
       await new Promise((r) => setTimeout(r, 10));
 
-      const calls = sendReply.mock.calls.map((c) => c[0]);
+      const calls = sendReplyTo.mock.calls.map((c) => c[1]);
       expect(calls.some((c) => c.includes("Context at 75%"))).toBe(true);
     });
 
     it("sends critical message with /compact at 92%", async () => {
-      const { manager, sendReply, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendReplyTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.setContextState(92, 164_000, 20_000);
@@ -555,13 +648,13 @@ describe("SessionManager", () => {
 
       await new Promise((r) => setTimeout(r, 10));
 
-      const calls = sendReply.mock.calls.map((c) => c[0]);
+      const calls = sendReplyTo.mock.calls.map((c) => c[1]);
       expect(calls.some((c) => c.includes("92%") && c.includes("/compact"))).toBe(true);
     });
 
     it("sends block message at 96%", async () => {
-      const { manager, sendReply, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendReplyTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.setContextState(96, 172_000, 20_000);
@@ -576,13 +669,13 @@ describe("SessionManager", () => {
 
       await new Promise((r) => setTimeout(r, 10));
 
-      const calls = sendReply.mock.calls.map((c) => c[0]);
+      const calls = sendReplyTo.mock.calls.map((c) => c[1]);
       expect(calls.some((c) => c.includes("96%") && c.includes("limit reached"))).toBe(true);
     });
 
     it("sends no extra message below 70%", async () => {
-      const { manager, sendReply, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      const { manager, sendReplyTo, getLastRunner } = createTestManager();
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.setContextState(50, 80_000, 20_000);
@@ -597,8 +690,7 @@ describe("SessionManager", () => {
 
       await new Promise((r) => setTimeout(r, 10));
 
-      const calls = sendReply.mock.calls.map((c) => c[0]);
-      // Only "Completed" message, no context warning
+      const calls = sendReplyTo.mock.calls.map((c) => c[1]);
       expect(calls.filter((c) => c.includes("Context at")).length).toBe(0);
     });
 
@@ -609,7 +701,7 @@ describe("SessionManager", () => {
 
     it("checkContextGuard returns guard result for known project", async () => {
       const { manager, getLastRunner } = createTestManager();
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
       const runner = getLastRunner()!;
 
       runner.setContextState(80, 140_000, 20_000);
@@ -622,15 +714,23 @@ describe("SessionManager", () => {
     });
 
     it("respects custom thresholds from config", async () => {
-      const sendReply = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
-      const sendButtons = vi
-        .fn<(text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>>()
+      const sendReplyTo = vi
+        .fn<(phone: string, text: string) => Promise<void>>()
+        .mockResolvedValue(undefined);
+      const sendButtonsTo = vi
+        .fn<
+          (
+            phone: string,
+            text: string,
+            buttons: Array<{ id: string; title: string }>,
+          ) => Promise<void>
+        >()
         .mockResolvedValue(undefined);
 
       let lastRunner: MockClaudeRunner | null = null;
       const manager = new SessionManager({
-        sendReply,
-        sendButtons,
+        sendReplyTo,
+        sendButtonsTo,
         contextGuard: { warnPercent: 50, criticalPercent: 70, blockPercent: 85 },
         createRunner: () => {
           lastRunner = new MockClaudeRunner();
@@ -638,7 +738,7 @@ describe("SessionManager", () => {
         },
       });
 
-      await manager.create({ project: "frontend", path: "/tmp/frontend" });
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
 
       // 60% is between custom warn (50) and custom critical (70)
       lastRunner!.setContextState(60, 100_000, 20_000);
@@ -654,6 +754,37 @@ describe("SessionManager", () => {
       lastRunner!.setContextState(90, 160_000, 20_000);
       const guard3 = manager.checkContextGuard("frontend");
       expect(guard3!.level).toBe("block");
+    });
+  });
+
+  describe("onSessionDestroy callback", () => {
+    it("calls onSessionDestroy when a session is destroyed", async () => {
+      const onSessionDestroy = vi.fn();
+      const sendReplyTo = vi
+        .fn<(phone: string, text: string) => Promise<void>>()
+        .mockResolvedValue(undefined);
+      const sendButtonsTo = vi
+        .fn<
+          (
+            phone: string,
+            text: string,
+            buttons: Array<{ id: string; title: string }>,
+          ) => Promise<void>
+        >()
+        .mockResolvedValue(undefined);
+
+      const manager = new SessionManager({
+        sendReplyTo,
+        sendButtonsTo,
+        onSessionDestroy,
+        createRunner: () => new MockClaudeRunner() as unknown as ClaudeRunner,
+      });
+
+      await manager.create({ project: "frontend", path: "/tmp/frontend" }, PHONE_A);
+      await manager.destroy("frontend");
+
+      expect(onSessionDestroy).toHaveBeenCalledTimes(1);
+      expect(onSessionDestroy).toHaveBeenCalledWith("frontend");
     });
   });
 });

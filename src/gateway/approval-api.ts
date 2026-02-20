@@ -3,7 +3,7 @@ import type { SessionManager } from "../sessions/jorchbot/manager.js";
 
 export interface ApprovalApiDeps {
   sessionManager: SessionManager;
-  sendReply: (text: string) => Promise<void>;
+  sendReplyTo: (phone: string, text: string) => Promise<void>;
 }
 
 /**
@@ -91,9 +91,11 @@ export function createApprovalRouter(deps: ApprovalApiDeps): Router {
     const session = sessions.find((s) => s.id === sessionId);
     const prefix = session ? `[${session.project}] ` : "";
 
-    deps.sendReply(`${prefix}${resultText}`).catch((err: unknown) => {
-      console.error("[approval-api] Failed to send tool result:", err);
-    });
+    if (session) {
+      deps.sendReplyTo(session.ownerPhone, `${prefix}${resultText}`).catch((err: unknown) => {
+        console.error("[approval-api] Failed to send tool result:", err);
+      });
+    }
 
     // Log the tool result
     if (session) {

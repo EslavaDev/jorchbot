@@ -71,12 +71,12 @@ describe("ShellRunner", () => {
       expect(result.exitCode).toBe(42);
     });
 
-    it("truncates output exceeding WhatsApp limit", async () => {
+    it("truncates output exceeding max output length", async () => {
       const runner = new ShellRunner();
-      // Generate output > 4096 chars using printf (more portable than python)
-      const result = await runner.execute("printf '%0.s-' $(seq 1 5000)", "/tmp");
+      // Generate output > 16384 chars (MAX_OUTPUT_LENGTH)
+      const result = await runner.execute("printf '%0.s-' $(seq 1 20000)", "/tmp");
       expect(result.truncated).toBe(true);
-      expect(result.stdout.length).toBeLessThanOrEqual(4096);
+      expect(result.stdout.length).toBeLessThanOrEqual(16384);
       expect(result.stdout).toContain("(truncated)");
     });
 

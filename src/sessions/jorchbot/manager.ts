@@ -46,6 +46,7 @@ export interface ActiveSession {
   id: string;
   project: string;
   path: string;
+  ownerPhone: string;
   runner: ClaudeRunner;
   approval: ApprovalManager;
 }
@@ -54,6 +55,7 @@ export interface SessionRecord {
   id: string;
   project: string;
   path: string;
+  ownerPhone: string | null;
   claudeSessionId: string | null;
   mode: "confirm" | "plan" | "auto";
   outputMode: "verbose" | "summary" | "silent";
@@ -69,14 +71,24 @@ interface SessionManagerDeps {
   gatewayPort?: number;
   hookScriptDir?: string;
   contextGuard?: ContextGuardThresholds & { contextLimit?: number };
-  sendReply: (text: string) => Promise<void>;
-  sendButtons: (text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>;
-  sendList?: (
+  /** Targeted send: delivers text to a specific phone. */
+  sendReplyTo: (phone: string, text: string) => Promise<void>;
+  /** Targeted send: delivers buttons to a specific phone. */
+  sendButtonsTo: (
+    phone: string,
+    text: string,
+    buttons: Array<{ id: string; title: string }>,
+  ) => Promise<void>;
+  /** Targeted send: delivers a list to a specific phone. */
+  sendListTo?: (
+    phone: string,
     text: string,
     buttonText: string,
     options: Array<{ id: string; title: string; description?: string }>,
   ) => Promise<void>;
   createRunner?: () => ClaudeRunner;
+  /** Called after a session is destroyed (before focus auto-switch). Used to clean up background tasks/tunnels. */
+  onSessionDestroy?: (project: string) => void;
 }
 
 const DEFAULT_MAX_SESSIONS = 5;
@@ -90,17 +102,20 @@ export class SessionManager {
   private hookScriptDir: string | null;
   private contextGuardThresholds: ContextGuardThresholds;
   private contextGuardLimit: number | undefined;
-  private sendReply: (text: string) => Promise<void>;
-  private sendButtons: (
+  private sendReplyTo: (phone: string, text: string) => Promise<void>;
+  private sendButtonsTo: (
+    phone: string,
     text: string,
     buttons: Array<{ id: string; title: string }>,
   ) => Promise<void>;
-  private sendList: (
+  private sendListTo: (
+    phone: string,
     text: string,
     buttonText: string,
     options: Array<{ id: string; title: string; description?: string }>,
   ) => Promise<void>;
   private createRunner: () => ClaudeRunner;
+  private onSessionDestroy: ((project: string) => void) | undefined;
 
   constructor(deps: SessionManagerDeps) {
     this.maxSessions = deps.maxSessions ?? DEFAULT_MAX_SESSIONS;
@@ -112,11 +127,12 @@ export class SessionManager {
       blockPercent: deps.contextGuard?.blockPercent,
     };
     this.contextGuardLimit = deps.contextGuard?.contextLimit;
-    this.sendReply = deps.sendReply;
-    this.sendButtons = deps.sendButtons;
-    this.sendList = deps.sendList ?? (async () => {});
+    this.sendReplyTo = deps.sendReplyTo;
+    this.sendButtonsTo = deps.sendButtonsTo;
+    this.sendListTo = deps.sendListTo ?? (async () => {});
     this.createRunner =
       deps.createRunner ?? (() => new ClaudeRunner({ contextLimit: this.contextGuardLimit }));
+    this.onSessionDestroy = deps.onSessionDestroy;
     this.focusModel = new FocusModel();
   }
 
@@ -127,7 +143,7 @@ export class SessionManager {
    * @throws {SessionAlreadyExistsError} If a session with this project name exists
    * @throws {SessionCreateError} If DB insert or runner creation fails
    */
-  async create(input: CreateSessionInput): Promise<SessionRecord> {
+  async create(input: CreateSessionInput, ownerPhone: string): Promise<SessionRecord> {
     const validated = CreateSessionInputSchema.parse(input);
 
     if (this.active.size >= this.maxSessions) {
@@ -144,7 +160,7 @@ export class SessionManager {
 
     const id = randomUUID();
     const now = new Date();
-    const isFirst = this.active.size === 0;
+    const isFirstForOwner = ![...this.active.values()].some((s) => s.ownerPhone === ownerPhone);
 
     try {
       const db = getDb();
@@ -153,46 +169,52 @@ export class SessionManager {
           id,
           project: validated.project,
           path: validated.path,
+          ownerPhone,
           mode: "confirm",
           outputMode: "verbose",
           contextPercent: 0,
           status: "active",
-          focused: isFirst,
+          focused: isFirstForOwner,
           createdAt: now,
           updatedAt: now,
         })
         .run();
 
       const runner = this.createRunner();
+      runner.setEnv({
+        JORCHBOT_SESSION_ID: id,
+        JORCHBOT_GATEWAY_PORT: String(this.gatewayPort),
+      });
       const approval = new ApprovalManager({
         sessionId: id,
         sendButtons: async (text, buttons) => {
-          const prefix = isFirst ? "" : " (background)";
-          await this.sendButtons(`[${validated.project}]${prefix} ${text}`, buttons);
+          const prefix = isFirstForOwner ? "" : " (background)";
+          await this.sendButtonsTo(ownerPhone, `[${validated.project}]${prefix} ${text}`, buttons);
         },
       });
 
-      this.wireRunnerEvents(runner, id, validated.project);
+      this.wireRunnerEvents(runner, id, validated.project, ownerPhone);
 
       this.active.set(validated.project, {
         id,
         project: validated.project,
         path: validated.path,
+        ownerPhone,
         runner,
         approval,
       });
 
-      if (isFirst) {
-        this.focusModel.setFocused(validated.project);
+      if (isFirstForOwner) {
+        this.focusModel.setFocused(ownerPhone, validated.project);
       }
 
-      // Generate hook config for tool approval (if hook scripts are available)
+      // Generate hook config for tool approval (if hook scripts are available).
+      // Env vars (JORCHBOT_SESSION_ID, JORCHBOT_GATEWAY_PORT) are set via runner.setEnv()
+      // above and inherited by hook scripts through the spawned process env.
       if (this.hookScriptDir) {
         try {
           const hookConfig = generateHookConfig({
-            gatewayPort: this.gatewayPort,
             hookScriptDir: this.hookScriptDir,
-            sessionId: id,
           });
           writeHookConfig(validated.path, hookConfig);
         } catch {
@@ -252,6 +274,9 @@ export class SessionManager {
 
       this.active.delete(project);
 
+      // Notify Phase 3 cleanup (background tasks, tunnels)
+      this.onSessionDestroy?.(project);
+
       // Unregister from OpenClaw agent config (best-effort)
       try {
         unregisterAgent(project);
@@ -259,13 +284,15 @@ export class SessionManager {
         // Best-effort — don't fail session destroy if agent unregister fails
       }
 
-      if (this.focusModel.getFocused() === project) {
-        const next = this.active.keys().next().value;
-        if (next) {
-          this.focusModel.setFocused(next);
-          this.updateFocusInDb(next, true);
+      // Auto-switch focus to another session of the same owner
+      const ownerPhone = session.ownerPhone;
+      if (this.focusModel.getFocused(ownerPhone) === project) {
+        const nextOwned = [...this.active.values()].find((s) => s.ownerPhone === ownerPhone);
+        if (nextOwned) {
+          this.focusModel.setFocused(ownerPhone, nextOwned.project);
+          this.updateFocusInDb(nextOwned.project, true, ownerPhone);
         } else {
-          this.focusModel.clearFocus();
+          this.focusModel.clearFocus(ownerPhone);
         }
       }
     } catch (err: unknown) {
@@ -278,20 +305,27 @@ export class SessionManager {
    *
    * @throws {SessionNotFoundError} If no session with this project exists
    */
-  async switchFocus(project: string): Promise<void> {
-    if (!this.active.has(project)) {
+  async switchFocus(project: string, ownerPhone: string): Promise<void> {
+    const session = this.active.get(project);
+    if (!session) {
       throw new SessionNotFoundError(
         `No active session named "${project}". Use /list to see sessions.`,
       );
     }
 
-    const previousFocused = this.focusModel.getFocused();
-    if (previousFocused) {
-      this.updateFocusInDb(previousFocused, false);
+    if (session.ownerPhone !== ownerPhone) {
+      throw new SessionNotFoundError(
+        `Session "${project}" belongs to another user. Use /list to see your sessions.`,
+      );
     }
 
-    this.focusModel.setFocused(project);
-    this.updateFocusInDb(project, true);
+    const previousFocused = this.focusModel.getFocused(ownerPhone);
+    if (previousFocused) {
+      this.updateFocusInDb(previousFocused, false, ownerPhone);
+    }
+
+    this.focusModel.setFocused(ownerPhone, project);
+    this.updateFocusInDb(project, true, ownerPhone);
   }
 
   /** List all sessions from DB (includes stopped sessions). */
@@ -300,15 +334,24 @@ export class SessionManager {
     return db.select().from(sessions).all() as SessionRecord[];
   }
 
-  /** List only active sessions. */
-  listActive(): SessionRecord[] {
+  /** List only active sessions. Optionally filter by ownerPhone. */
+  listActive(ownerPhone?: string): SessionRecord[] {
     const db = getDb();
-    return db.select().from(sessions).where(eq(sessions.status, "active")).all() as SessionRecord[];
+    const rows = db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.status, "active"))
+      .all() as SessionRecord[];
+
+    if (ownerPhone) {
+      return rows.filter((r) => r.ownerPhone === ownerPhone || r.ownerPhone === null);
+    }
+    return rows;
   }
 
-  /** Get the currently focused session, or null. */
-  getFocused(): ActiveSession | null {
-    const focusedProject = this.focusModel.getFocused();
+  /** Get the currently focused session for a phone, or null. */
+  getFocused(ownerPhone: string): ActiveSession | null {
+    const focusedProject = this.focusModel.getFocused(ownerPhone);
     if (!focusedProject) {
       return null;
     }
@@ -346,7 +389,7 @@ export class SessionManager {
     // Block if context guard says so
     const guard = this.checkContextGuard(project);
     if (guard?.shouldBlock) {
-      void this.sendReply(guard.message!);
+      void this.sendReplyTo(session.ownerPhone, guard.message!);
       return;
     }
 
@@ -357,7 +400,8 @@ export class SessionManager {
         await session.runner.resume({ prompt: answer, cwd: session.path });
       }
     } catch (err: unknown) {
-      void this.sendReply(
+      void this.sendReplyTo(
+        session.ownerPhone,
         `[${project}] Error: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -418,24 +462,30 @@ export class SessionManager {
 
     let restored = 0;
     for (const record of activeSessions) {
+      const ownerPhone = record.ownerPhone ?? "";
       const runner = this.createRunner();
+      runner.setEnv({
+        JORCHBOT_SESSION_ID: record.id,
+        JORCHBOT_GATEWAY_PORT: String(this.gatewayPort),
+      });
       const approval = new ApprovalManager({
         sessionId: record.id,
-        sendButtons: this.sendButtons,
+        sendButtons: (text, buttons) => this.sendButtonsTo(ownerPhone, text, buttons),
       });
 
-      this.wireRunnerEvents(runner, record.id, record.project);
+      this.wireRunnerEvents(runner, record.id, record.project, ownerPhone);
 
       this.active.set(record.project, {
         id: record.id,
         project: record.project,
         path: record.path,
+        ownerPhone,
         runner,
         approval,
       });
 
-      if (record.focused) {
-        this.focusModel.setFocused(record.project);
+      if (record.focused && ownerPhone) {
+        this.focusModel.setFocused(ownerPhone, record.project);
       }
 
       restored++;
@@ -446,12 +496,17 @@ export class SessionManager {
 
   // --- Private helpers ---
 
-  private wireRunnerEvents(runner: ClaudeRunner, sessionId: string, project: string): void {
+  private wireRunnerEvents(
+    runner: ClaudeRunner,
+    sessionId: string,
+    project: string,
+    ownerPhone: string,
+  ): void {
     runner.on("text", (text) => {
       this.logMessage(sessionId, "outbound", "text", text);
 
-      if (this.focusModel.getFocused() === project) {
-        void this.sendReply(`[${project}] ${text}`);
+      if (this.focusModel.getFocused(ownerPhone) === project) {
+        void this.sendReplyTo(ownerPhone, `[${project}] ${text}`);
       }
     });
 
@@ -471,7 +526,7 @@ export class SessionManager {
         .where(eq(sessions.id, sessionId))
         .run();
 
-      const isFocused = this.focusModel.getFocused() === project;
+      const isFocused = this.focusModel.getFocused(ownerPhone) === project;
 
       // Detect questions and send interactive buttons/lists instead of "Completed"
       const question = detectQuestion(result.textContent);
@@ -479,7 +534,7 @@ export class SessionManager {
         this.pendingQuestions.set(project, { sessionId });
 
         if (question.type === "yes-no") {
-          void this.sendButtons(`[${project}] ${question.questionText}`, [
+          void this.sendButtonsTo(ownerPhone, `[${project}] ${question.questionText}`, [
             {
               id: JSON.stringify({ type: "question_answer", project, answer: "Sí" }),
               title: "Sí",
@@ -490,7 +545,8 @@ export class SessionManager {
             },
           ]);
         } else if (question.options.length <= 3) {
-          void this.sendButtons(
+          void this.sendButtonsTo(
+            ownerPhone,
             `[${project}] ${question.questionText}`,
             question.options.map((opt) => ({
               id: JSON.stringify({ type: "question_answer", project, answer: opt }),
@@ -498,7 +554,8 @@ export class SessionManager {
             })),
           );
         } else {
-          void this.sendList(
+          void this.sendListTo(
+            ownerPhone,
             `[${project}] ${question.questionText}`,
             "Options",
             question.options.map((opt) => ({
@@ -512,7 +569,10 @@ export class SessionManager {
       }
 
       const suffix = isFocused ? "" : " (background)";
-      void this.sendReply(`[${project}]${suffix} Completed. Context: ${contextPercent}%`);
+      void this.sendReplyTo(
+        ownerPhone,
+        `[${project}]${suffix} Completed. Context: ${contextPercent}%`,
+      );
 
       const tokens = runner.getTokenCounts();
       const guardInfo = resolveContextInfo({
@@ -526,13 +586,13 @@ export class SessionManager {
         project,
       });
       if (guard.message) {
-        void this.sendReply(guard.message);
+        void this.sendReplyTo(ownerPhone, guard.message);
       }
     });
 
     runner.on("error", (err) => {
       this.logMessage(sessionId, "system", "error", err.message);
-      void this.sendReply(`[${project}] Error: ${err.message}`);
+      void this.sendReplyTo(ownerPhone, `[${project}] Error: ${err.message}`);
     });
   }
 
@@ -568,15 +628,23 @@ export class SessionManager {
     return record as SessionRecord;
   }
 
-  private updateFocusInDb(project: string, focused: boolean): void {
+  private updateFocusInDb(project: string, focused: boolean, ownerPhone: string): void {
     const session = this.active.get(project);
     if (!session) {
       return;
     }
     const db = getDb();
     if (focused) {
-      // First unfocus all, then focus the target
-      db.update(sessions).set({ focused: false, updatedAt: new Date() }).run();
+      // Unfocus all sessions of the same owner, then focus the target
+      const ownedIds = [...this.active.values()]
+        .filter((s) => s.ownerPhone === ownerPhone)
+        .map((s) => s.id);
+      for (const ownedId of ownedIds) {
+        db.update(sessions)
+          .set({ focused: false, updatedAt: new Date() })
+          .where(eq(sessions.id, ownedId))
+          .run();
+      }
       db.update(sessions)
         .set({ focused: true, updatedAt: new Date() })
         .where(eq(sessions.id, session.id))

@@ -297,7 +297,7 @@ describe("gateway server chat", () => {
       await writeMainSessionStore();
 
       spy.mockReset();
-      spy.mockImplementationOnce(async (_ctx, opts) => {
+      spy.mockImplementationOnce(async (_ctx: unknown, opts: GetReplyOptions | undefined) => {
         opts?.onAgentRunStart?.(opts.runId ?? "idem-abort-1");
         const signal = opts?.abortSignal;
         await new Promise<void>((resolve) => {

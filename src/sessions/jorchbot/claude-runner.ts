@@ -77,10 +77,21 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
   private lastOutputTokens = 0;
   private timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   private contextLimit: number;
+  private extraEnv: Record<string, string> = {};
 
   constructor(options?: { contextLimit?: number }) {
     super();
     this.contextLimit = options?.contextLimit ?? DEFAULT_CONTEXT_LIMIT;
+  }
+
+  /**
+   * Set extra environment variables for the spawned Claude Code process.
+   * Used by SessionManager to inject JORCHBOT_SESSION_ID, JORCHBOT_GATEWAY_PORT.
+   * Hook scripts inherit these from the parent process — no need to bake them
+   * into the hook command strings.
+   */
+  setEnv(env: Record<string, string>): void {
+    this.extraEnv = { ...this.extraEnv, ...env };
   }
 
   getSessionId(): string | null {
@@ -213,8 +224,10 @@ export class ClaudeRunner extends EventEmitter<ClaudeRunnerEvents> {
           stdio: [stdinMode, "pipe", "pipe"],
           env: {
             ...process.env,
+            ...this.extraEnv,
             NODE_OPTIONS: nodeOptions ? `${nodeOptions} --no-warnings` : "--no-warnings",
             // Hook scripts check this to avoid firing for non-JorchBot Claude instances.
+            // JORCHBOT_SESSION_ID and JORCHBOT_GATEWAY_PORT are set via setEnv() by SessionManager.
             JORCHBOT_ACTIVE: "1",
           },
         });

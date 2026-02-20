@@ -6,6 +6,7 @@ export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
   project: text("project").notNull(),
   path: text("path").notNull(),
+  ownerPhone: text("owner_phone"),
   claudeSessionId: text("claude_session_id"),
   mode: text("mode", { enum: ["confirm", "plan", "auto"] })
     .notNull()

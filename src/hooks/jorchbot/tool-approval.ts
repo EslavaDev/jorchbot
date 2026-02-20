@@ -18,7 +18,7 @@ if (!process.env.JORCHBOT_ACTIVE) {
 }
 
 const POLL_INTERVAL_MS = 500;
-const MAX_POLL_MS = 600_000; // 10 minutes
+const MAX_POLL_MS = 300_000; // 5 minutes
 
 interface StdinPayload {
   tool_name: string;
@@ -75,15 +75,33 @@ async function main(): Promise<void> {
     });
 
     if (!resp.ok) {
-      console.error(`[tool-approval] Gateway returned ${resp.status}`);
-      process.exit(1);
+      // Session not found (404) or gateway error — deny the tool to prevent
+      // orphaned runners from consuming tokens after session destroy.
+      const output = {
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason:
+            resp.status === 404
+              ? "Session no longer exists on gateway. Use /new to create a new session."
+              : `Gateway error (HTTP ${resp.status}). Is the gateway running?`,
+        },
+      };
+      process.stdout.write(JSON.stringify(output));
+      process.exit(0);
     }
 
     const data = (await resp.json()) as ApprovalResponse;
     approvalId = data.id;
-  } catch (err) {
-    console.error("[tool-approval] Failed to reach gateway:", err);
-    process.exit(1);
+  } catch {
+    // Gateway unreachable — deny to prevent orphaned token consumption.
+    const output = {
+      hookSpecificOutput: {
+        permissionDecision: "deny",
+        permissionDecisionReason: "Cannot reach JorchBot gateway. Is it running?",
+      },
+    };
+    process.stdout.write(JSON.stringify(output));
+    process.exit(0);
   }
 
   // Poll for decision
@@ -127,9 +145,15 @@ async function main(): Promise<void> {
     }
   }
 
-  // Timeout
-  console.error("[tool-approval] Timed out waiting for user response");
-  process.exit(1);
+  // Timeout — deny to prevent unattended token consumption.
+  const output = {
+    hookSpecificOutput: {
+      permissionDecision: "deny",
+      permissionDecisionReason: "Approval timed out (5 minutes). No response from user.",
+    },
+  };
+  process.stdout.write(JSON.stringify(output));
+  process.exit(0);
 }
 
 function sleep(ms: number): Promise<void> {

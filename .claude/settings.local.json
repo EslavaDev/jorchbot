@@ -115,44 +115,5 @@
     ]
   },
   "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": ["postgres", "playwright"],
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Write|Edit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "JORCHBOT_GATEWAY_PORT=18789 JORCHBOT_SESSION_ID=ebf87bec-7522-4a26-957c-ecc5d7ca0a12 node /Users/porkycode/Documents/porky/jj/dist/hooks/jorchbot/tool-approval.js",
-            "timeout": 600,
-            "statusMessage": "Waiting for WhatsApp approval..."
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash|Write|Edit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "JORCHBOT_GATEWAY_PORT=18789 JORCHBOT_SESSION_ID=ebf87bec-7522-4a26-957c-ecc5d7ca0a12 node /Users/porkycode/Documents/porky/jj/dist/hooks/jorchbot/tool-result.js",
-            "async": true
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "Bash|Write|Edit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "JORCHBOT_GATEWAY_PORT=18789 JORCHBOT_SESSION_ID=ebf87bec-7522-4a26-957c-ecc5d7ca0a12 node /Users/porkycode/Documents/porky/jj/dist/hooks/jorchbot/tool-result.js",
-            "async": true
-          }
-        ]
-      }
-    ]
-  }
+  "enabledMcpjsonServers": ["postgres", "playwright"]
 }

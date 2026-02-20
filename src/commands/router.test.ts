@@ -5,12 +5,17 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDb, getDb } from "../db/index.js";
 import { messages } from "../db/schema.js";
+import type { JorchfileExecutor } from "../jorchfile/executor.js";
+import type { Jorchfile } from "../jorchfile/parser.js";
+import type { BackgroundTask, BackgroundTaskManager } from "../jorchfile/task-manager.js";
 import { SessionManager } from "../sessions/jorchbot/manager.js";
 import { ShellRunner } from "../sessions/jorchbot/shell-runner.js";
 import { CommandRouter } from "./router.js";
 import type { CommandRouterDeps } from "./router.js";
 
 // --- Test helpers ---
+
+const SENDER = "+521234567890";
 
 function createMockRunner() {
   return {
@@ -36,6 +41,7 @@ function createMockRunner() {
       durationMs: 0,
     }),
     stop: vi.fn().mockResolvedValue(undefined),
+    setEnv: vi.fn(),
     on: vi.fn(),
     emit: vi.fn(),
   };
@@ -46,10 +52,18 @@ function createTestDeps(overrides?: Partial<CommandRouterDeps>) {
   const sendButtons = vi
     .fn<(text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>>()
     .mockResolvedValue(undefined);
+  const sendReplyTo = vi
+    .fn<(phone: string, text: string) => Promise<void>>()
+    .mockResolvedValue(undefined);
+  const sendButtonsTo = vi
+    .fn<
+      (phone: string, text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>
+    >()
+    .mockResolvedValue(undefined);
 
   const sessionManager = new SessionManager({
-    sendReply,
-    sendButtons,
+    sendReplyTo,
+    sendButtonsTo,
     createRunner: () => createMockRunner() as never,
   });
 
@@ -58,6 +72,8 @@ function createTestDeps(overrides?: Partial<CommandRouterDeps>) {
   return {
     sendReply,
     sendButtons,
+    sendReplyTo,
+    sendButtonsTo,
     sessionManager,
     shellRunner,
     deps: {
@@ -96,7 +112,7 @@ describe("CommandRouter (Phase 2)", () => {
   describe("routing", () => {
     it("routes $ prefix to shell execution", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
       await router.route(msg("$ echo hello"));
@@ -119,10 +135,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("routes free text to focused session", async () => {
       const { deps, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       const startSpy = vi.spyOn(focused.runner, "start").mockResolvedValue({
         sessionId: "s1",
         textContent: "",
@@ -185,8 +201,8 @@ describe("CommandRouter (Phase 2)", () => {
   describe("/switch", () => {
     it("switches focus and confirms", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
-      await sessionManager.create({ project: "backend", path: "/tmp/backend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      await sessionManager.create({ project: "backend", path: "/tmp/backend" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -210,8 +226,8 @@ describe("CommandRouter (Phase 2)", () => {
   describe("/list", () => {
     it("shows all sessions with focus indicator", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
-      await sessionManager.create({ project: "backend", path: "/tmp/backend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      await sessionManager.create({ project: "backend", path: "/tmp/backend" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -237,7 +253,7 @@ describe("CommandRouter (Phase 2)", () => {
   describe("/stop", () => {
     it("stops a session and confirms", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -251,7 +267,7 @@ describe("CommandRouter (Phase 2)", () => {
   describe("/status", () => {
     it("shows session count and focused session", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -275,7 +291,7 @@ describe("CommandRouter (Phase 2)", () => {
   describe("shell shortcuts", () => {
     it("/ls maps to ls -la", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp" });
+      await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -287,7 +303,7 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("/git maps to git command", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp" });
+      await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -299,7 +315,7 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("/pwd maps to pwd", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp" });
+      await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -314,7 +330,7 @@ describe("CommandRouter (Phase 2)", () => {
   describe("dangerous commands", () => {
     it("sends approval buttons for dangerous $ commands", async () => {
       const { deps, sendButtons, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp" });
+      await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendButtons.mockClear();
@@ -331,7 +347,7 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("executes safe commands immediately", async () => {
       const { deps, sendReply, sendButtons, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp" });
+      await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -347,10 +363,10 @@ describe("CommandRouter (Phase 2)", () => {
   describe("! claude commands", () => {
     it("!usage shows session token counts", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       vi.spyOn(focused.runner, "getTokenCounts").mockReturnValue({ input: 5000, output: 1000 });
       vi.spyOn(focused.runner, "getContextPercent").mockReturnValue(3);
 
@@ -376,10 +392,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("!context shows context window with progress bar", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       vi.spyOn(focused.runner, "getTokenCounts").mockReturnValue({ input: 50000, output: 10000 });
       vi.spyOn(focused.runner, "getContextPercent").mockReturnValue(30);
       vi.spyOn(focused.runner, "getContextLimit").mockReturnValue(200_000);
@@ -397,10 +413,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("!context shows dynamic limit from runner", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       vi.spyOn(focused.runner, "getTokenCounts").mockReturnValue({ input: 50000, output: 10000 });
       vi.spyOn(focused.runner, "getContextPercent").mockReturnValue(60);
       vi.spyOn(focused.runner, "getContextLimit").mockReturnValue(100_000);
@@ -415,10 +431,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("!compact compacts focused session", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       vi.spyOn(focused.runner, "getContextPercent").mockReturnValueOnce(80).mockReturnValueOnce(20);
 
       sendReply.mockClear();
@@ -433,7 +449,7 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("!clear resets focused session", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
       sendReply.mockClear();
@@ -446,10 +462,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("!status forwards /status as prompt to Claude Code", async () => {
       const { deps, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       const startSpy = vi.spyOn(focused.runner, "start").mockResolvedValue({
         sessionId: "s1",
         textContent: "",
@@ -467,10 +483,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("!commit forwards as /commit to Claude Code", async () => {
       const { deps, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       const startSpy = vi.spyOn(focused.runner, "start").mockResolvedValue({
         sessionId: "s1",
         textContent: "",
@@ -510,10 +526,10 @@ describe("CommandRouter (Phase 2)", () => {
   describe("context guard block enforcement", () => {
     it("blocks free text when context is at block level", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       // 96% → block level (>= 95%)
       vi.spyOn(focused.runner, "getTokenCounts").mockReturnValue({
         input: 172_000,
@@ -532,10 +548,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("allows free text below block level", async () => {
       const { deps, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       // 92% → critical, not block
       vi.spyOn(focused.runner, "getTokenCounts").mockReturnValue({
         input: 164_000,
@@ -559,10 +575,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("blocks ! commands when context is at block level", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       vi.spyOn(focused.runner, "getTokenCounts").mockReturnValue({
         input: 172_000,
         output: 20_000,
@@ -594,10 +610,10 @@ describe("CommandRouter (Phase 2)", () => {
   describe("free text with focused session", () => {
     it("calls runner.start for first message", async () => {
       const { deps, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       const startSpy = vi.spyOn(focused.runner, "start").mockResolvedValue({
         sessionId: "s1",
         textContent: "",
@@ -614,10 +630,10 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("calls runner.resume when session exists", async () => {
       const { deps, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
       const router = new CommandRouter(deps);
 
-      const focused = sessionManager.getFocused()!;
+      const focused = sessionManager.getFocused(SENDER)!;
       vi.spyOn(focused.runner, "getSessionId").mockReturnValue("sess_abc");
       const resumeSpy = vi.spyOn(focused.runner, "resume").mockResolvedValue({
         sessionId: "sess_abc",
@@ -637,7 +653,10 @@ describe("CommandRouter (Phase 2)", () => {
   describe("message logging", () => {
     it("logs inbound messages to DB", async () => {
       const { deps, sessionManager } = createTestDeps();
-      const session = await sessionManager.create({ project: "frontend", path: "/tmp/frontend" });
+      const session = await sessionManager.create(
+        { project: "frontend", path: "/tmp/frontend" },
+        SENDER,
+      );
       const router = new CommandRouter(deps);
 
       await router.route(msg("$ echo hello"));
@@ -653,7 +672,7 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("logs shell output to DB", async () => {
       const { deps, sessionManager } = createTestDeps();
-      const session = await sessionManager.create({ project: "frontend", path: "/tmp" });
+      const session = await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
       const router = new CommandRouter(deps);
 
       await router.route(msg("$ echo test-output"));
@@ -668,7 +687,7 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("/logs returns messages in order", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp" });
+      await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
       const router = new CommandRouter(deps);
 
       // Generate some logged messages via shell commands
@@ -687,7 +706,7 @@ describe("CommandRouter (Phase 2)", () => {
 
     it("/logs respects count limit", async () => {
       const { deps, sendReply, sessionManager } = createTestDeps();
-      await sessionManager.create({ project: "frontend", path: "/tmp" });
+      await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
       const router = new CommandRouter(deps);
 
       // Generate several messages
@@ -710,6 +729,339 @@ describe("CommandRouter (Phase 2)", () => {
 
       expect(sendReply).toHaveBeenCalledTimes(1);
       expect(sendReply.mock.calls[0][0]).toContain("No messages logged");
+    });
+  });
+});
+
+// --- Phase 3 helpers ---
+
+function createTestJorchfile(): Jorchfile {
+  return {
+    projects: [
+      {
+        name: "frontend",
+        path: "/tmp/frontend",
+        commands: { dev: "npm run dev", test: "npm run test", build: "npm run build" },
+        background: ["dev", "build"],
+      },
+      {
+        name: "backend",
+        path: "/tmp/backend",
+        commands: { dev: "python manage.py runserver", test: "pytest" },
+        background: ["dev"],
+        port: 8000,
+        tunnel: "serve",
+      },
+    ],
+    settings: {},
+  };
+}
+
+function createMockExecutor(jorchfile: Jorchfile) {
+  const executor = {
+    getJorchfile: vi.fn(() => jorchfile),
+    hasCommand: vi.fn((cmd: string) => jorchfile.projects.some((p) => cmd in p.commands)),
+    getProject: vi.fn((name: string) => jorchfile.projects.find((p) => p.name === name) ?? null),
+    execute: vi.fn().mockResolvedValue(undefined),
+    getRegisteredCommands: vi.fn(() => {
+      const cmds = new Set<string>();
+      for (const p of jorchfile.projects) {
+        for (const c of Object.keys(p.commands)) {
+          cmds.add(c);
+        }
+      }
+      return [...cmds];
+    }),
+    stopTunnel: vi.fn().mockResolvedValue(undefined),
+    stopAllTunnels: vi.fn().mockResolvedValue(undefined),
+    updateJorchfile: vi.fn(),
+  };
+  return executor as typeof executor & JorchfileExecutor;
+}
+
+function createMockTaskManager() {
+  const manager = {
+    listAll: vi.fn<() => BackgroundTask[]>().mockReturnValue([]),
+    listByProject: vi.fn<(project: string) => BackgroundTask[]>().mockReturnValue([]),
+    hasTasksFor: vi.fn().mockReturnValue(false),
+    start: vi.fn().mockResolvedValue({ pid: 12345 }),
+    stop: vi.fn(),
+    stopAll: vi.fn().mockReturnValue(0),
+  };
+  return manager as typeof manager & BackgroundTaskManager;
+}
+
+describe("CommandRouter (Phase 3)", () => {
+  let tempDir: string;
+  const originalDbPath = process.env.JORCHBOT_DB_PATH;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jorchbot-router-p3-"));
+    process.env.JORCHBOT_DB_PATH = path.join(tempDir, "test.db");
+  });
+
+  afterEach(() => {
+    closeDb();
+    if (originalDbPath === undefined) {
+      delete process.env.JORCHBOT_DB_PATH;
+    } else {
+      process.env.JORCHBOT_DB_PATH = originalDbPath;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe("/projects", () => {
+    it("lists Jorchfile projects with session status", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const taskManager = createMockTaskManager();
+      const { deps, sendReply, sessionManager } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+        taskManager: taskManager as unknown as BackgroundTaskManager,
+      });
+
+      // Create a session for frontend to test "active" status
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/projects"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("frontend");
+      expect(reply).toContain("backend");
+      expect(reply).toContain("active");
+      expect(reply).toContain("no session");
+    });
+
+    it("shows message when no Jorchfile loaded", async () => {
+      const { deps, sendReply } = createTestDeps({
+        getJorchfileExecutor: () => null,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/projects"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      expect(sendReply.mock.calls[0][0]).toContain("No Jorchfile loaded");
+    });
+  });
+
+  describe("/tasks", () => {
+    it("shows background tasks with uptime", async () => {
+      const taskManager = createMockTaskManager();
+      taskManager.listAll.mockReturnValue([
+        {
+          pid: 12345,
+          project: "frontend",
+          commandName: "dev",
+          shellCommand: "npm run dev",
+          startedAt: new Date(),
+          process: {} as never,
+        },
+      ]);
+
+      const { deps, sendReply } = createTestDeps({
+        taskManager: taskManager as unknown as BackgroundTaskManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/tasks"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("PID 12345");
+      expect(reply).toContain("frontend");
+      expect(reply).toContain("dev");
+    });
+
+    it("shows empty message when no tasks running", async () => {
+      const taskManager = createMockTaskManager();
+      const { deps, sendReply } = createTestDeps({
+        taskManager: taskManager as unknown as BackgroundTaskManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/tasks"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      expect(sendReply.mock.calls[0][0]).toContain("No background tasks running");
+    });
+  });
+
+  describe("/stop-cmd", () => {
+    it("stops specific task and closes tunnel", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const taskManager = createMockTaskManager();
+      taskManager.listByProject.mockReturnValue([
+        {
+          pid: 99,
+          project: "backend",
+          commandName: "dev",
+          shellCommand: "python manage.py runserver",
+          port: 8000,
+          startedAt: new Date(),
+          process: {} as never,
+        },
+      ]);
+
+      const { deps, sendReply } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+        taskManager: taskManager as unknown as BackgroundTaskManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/stop-cmd backend dev"));
+
+      expect(taskManager.stop).toHaveBeenCalledWith("backend", "dev");
+      expect(executor.stopTunnel).toHaveBeenCalledWith("backend", 8000);
+      expect(sendReply).toHaveBeenCalledWith(expect.stringContaining('Stopped "dev"'));
+    });
+
+    it("stops all tasks for project when no command specified", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const taskManager = createMockTaskManager();
+      taskManager.stopAll.mockReturnValue(2);
+
+      const { deps, sendReply } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+        taskManager: taskManager as unknown as BackgroundTaskManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/stop-cmd frontend"));
+
+      expect(taskManager.stopAll).toHaveBeenCalledWith("frontend");
+      expect(executor.stopAllTunnels).toHaveBeenCalledWith("frontend");
+      expect(sendReply).toHaveBeenCalledWith(expect.stringContaining("Stopped 2 background task"));
+    });
+  });
+
+  describe("/make", () => {
+    it("lists Makefile targets when no target specified", async () => {
+      const mockReadTargets = vi.fn().mockReturnValue(["build", "test", "clean"]);
+      const { deps, sendReply, sessionManager } = createTestDeps({
+        readMakefileTargets: mockReadTargets,
+      });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/make"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("Makefile targets");
+      expect(reply).toContain("build");
+      expect(reply).toContain("test");
+      expect(reply).toContain("clean");
+    });
+
+    it("executes make target via shell", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/make build"));
+
+      expect(sendReply).toHaveBeenCalled();
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("[frontend] $ make build");
+    });
+  });
+
+  describe("/new from Jorchfile", () => {
+    it("uses Jorchfile path when no explicit path provided", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const { deps, sendReply } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/new frontend"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("[frontend] Session created");
+      expect(reply).toContain("(from Jorchfile)");
+      expect(reply).toContain("/tmp/frontend");
+    });
+
+    it("shows error when project not in Jorchfile and no path", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const { deps, sendReply } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/new unknown"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      expect(sendReply.mock.calls[0][0]).toContain("not found in Jorchfile");
+    });
+  });
+
+  describe("Jorchfile command priority", () => {
+    it("dispatches Jorchfile command to executor", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const { deps, sessionManager } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+      });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/dev frontend"));
+
+      expect(executor.execute).toHaveBeenCalledWith("dev", "frontend", false, SENDER);
+    });
+
+    it("parses trailing & for background flag", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const { deps, sessionManager } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+      });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/test frontend &"));
+
+      expect(executor.execute).toHaveBeenCalledWith("test", "frontend", true, SENDER);
+    });
+
+    it("uses focused session when no project arg given", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const { deps, sessionManager } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+      });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/dev"));
+
+      expect(executor.execute).toHaveBeenCalledWith("dev", undefined, false, SENDER);
+    });
+
+    it("unknown command falls through to shell shortcuts or unknown", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const { deps, sendReply } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/nonexistent"));
+
+      expect(executor.execute).not.toHaveBeenCalled();
+      expect(sendReply).toHaveBeenCalledWith(expect.stringContaining("Unknown command"));
     });
   });
 });
