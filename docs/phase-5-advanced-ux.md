@@ -2,261 +2,379 @@
 
 > **Estado**: Pendiente
 > **Dependencia**: Fase 2
-> **Entregable**: Modos (plan/auto/confirm), Yes+feedback, listas Kapso, smart chunking
-> **Al terminar**: Experiencia pulida comparable al CLI de Claude Code pero desde WhatsApp
+> **Entregable**: Modos de operacion, listas Kapso, smart chunking, Yes+feedback, timeouts
+> **Al terminar**: `/mode auto` activa auto-accept, aprobaciones complejas usan listas de 10 items, output largo se envia como documento, "Yes+feedback" permite aprobar con instrucciones adicionales
 
 ---
 
 ## Nota Arquitectural (rev. 2 — DeepWiki)
 
-> **Sistemas existentes que esta fase extiende**:
+> OpenClaw ya tiene:
 >
-> - **Auto-compaction**: Ya existe via `sessions.compact` RPC. Solo conectar al comando `/compact` y alertas de context %.
-> - **Tool approval via hooks**: Fase 2 implementa `PreToolUse`/`PostToolUse`/`PostToolUseFailure` hooks para aprobacion a nivel de herramienta. Fase 5 agrega: "Yes + feedback" (inyecta `additionalContext`), aprobacion parcial, y listas interactivas.
-> - **Message chunking**: OpenClaw ya tiene `textLimit` por canal (4096 default). El chunking basico se hereda del Plugin SDK.
-> - **System prompts**: Fase 1 define `PLAN_MODE_PROMPT`, `CONFIRM_MODE_PROMPT`, `AUTO_MODE_PROMPT` en `src/commands/system-prompts.ts`. Fase 5 conecta el comando `/mode` para seleccionar entre ellos.
+> - **Auto-compaction**: `sessions.compact` RPC — JorchBot lo expone via `/compact`
+> - **Tool approval**: `exec.ask` modes (off/on-miss/always) — base para modos confirm/auto
+> - **Message chunking**: `textLimit` por canal (4096 default) — base para smart split
 >
-> **Lo nuevo de esta fase**: Smart chunking avanzado (split por bloques de codigo, truncate + document), "Yes + feedback" con `additionalContext` en hooks, listas interactivas, flujo de feedback, y modos configurables por comando.
+> **Capa 1 (reusar)**: Auto-compaction, tool approval engine, textLimit.
 >
-> **Hooks adicionales** (ver SPEC fase 2 seccion 2.6.8): Fase 5 puede aprovechar `Notification` hook
-> (detectar `idle_prompt` cuando Claude espera), `Stop` hook (detectar preguntas via
-> `last_assistant_message`), y `PreCompact` hook (notificar antes de auto-compaction).
+> **Capa 2 (construir)**: Modos de operacion (approval + output), Yes+feedback flow,
+> listas Kapso para aprobaciones complejas, smart chunking avanzado, approval timeout,
+> streaming batched output.
+
+---
 
 ## Objetivo
 
-Refinar la experiencia de usuario para que sea tan productiva como usar Claude Code
-en el CLI. Agregar el flujo de "Yes + feedback", modos de operacion, listas para
-aprobaciones complejas, y smart message chunking.
+Implementar las features de UX que hacen que JorchBot sea comodo de usar desde
+WhatsApp: modos de operacion configurables, aprobaciones ricas con feedback,
+manejo inteligente de mensajes largos, y timeouts de aprobacion.
 
 ---
 
 ## Entregables
 
-1. Flujo completo de aprobacion: Yes / Yes+feedback / No / Ver detalles
-2. Modos de aprobacion: confirm, plan, auto
-3. Modos de output: verbose, summary, silent
-4. Listas de Kapso para aprobaciones multi-accion
-5. Smart message chunking (split, truncate, document)
-6. Timeout y pause de aprobaciones
+1. Modos de aprobacion: confirm (default), plan, auto
+2. Modos de output: verbose (default), summary, silent
+3. Comando /mode para cambiar modos en tiempo real
+4. Flujo "Yes + feedback" (aprobar con instrucciones adicionales)
+5. Listas Kapso para aprobaciones complejas (hasta 10 items)
+6. Smart chunking de mensajes largos (4 niveles)
+7. Approval timeout con recordatorio y pausa
+8. Streaming batched para output en tiempo real
 
 ---
 
 ## Tareas
 
-### 5.1 Flujo "Yes + feedback"
+### 5.1 Modos de Aprobacion
 
-Extender el sistema de aprobacion de fase 1 con el tercer boton:
+Cada sesion tiene un modo de aprobacion que controla cuanta autonomia tiene Claude Code.
 
-**Botones por mensaje de aprobacion**:
+| Modo                | Comportamiento                                    | `--allowedTools` de Claude Code     |
+| ------------------- | ------------------------------------------------- | ----------------------------------- |
+| `confirm` (default) | Cada accion pide aprobacion via boton             | Solo Read, Grep, Glob               |
+| `plan`              | Claude planifica, muestra plan, espera aprobacion | Solo Read, Grep, Glob               |
+| `auto`              | Auto-aprueba todo. Claude ejecuta sin preguntar   | Read, Edit, Write, Bash, Grep, Glob |
+
+```typescript
+// src/sessions/jorchbot/modes.ts
+type ApprovalMode = "confirm" | "plan" | "auto";
+type OutputMode = "verbose" | "summary" | "silent";
+
+interface SessionModes {
+  approval: ApprovalMode;
+  output: OutputMode;
+}
+```
+
+- [ ] Agregar columnas `approvalMode` y `outputMode` a tabla `sessions`
+- [ ] Default: `confirm` + `verbose`
+- [ ] Al crear sesion, leer defaults del Jorchfile (`approve`, `output` fields)
+- [ ] Mapear modos a flags de Claude Code:
+  - `confirm`: `--allowedTools "Read,Grep,Glob"` (lo demas requiere hooks approval)
+  - `plan`: Igual que confirm + `--append-system-prompt "Always create a plan first..."`
+  - `auto`: `--dangerously-skip-permissions` o allowedTools completo
+- [ ] Cambio de modo NO reinicia la sesion de Claude Code (aplica en el siguiente mensaje)
+
+**Criterio de aceptacion**: Sesion en modo `auto` ejecuta sin pedir aprobacion. Modo `confirm` pide aprobacion para cada Edit/Bash.
+
+### 5.2 Modos de Output
+
+Controlan cuanto detalle recibe el usuario en el chat.
+
+| Modo                | Que se envia al chat                              | Que va solo a logs  |
+| ------------------- | ------------------------------------------------- | ------------------- |
+| `verbose` (default) | Todo: archivos leidos, editados, comandos, output | Nada (todo visible) |
+| `summary`           | Inicio de tarea, resultado final, errores         | Pasos intermedios   |
+| `silent`            | Solo aprobaciones necesarias y resultado final    | Todo lo demas       |
+
+- [ ] Implementar `OutputFilter` en `src/sessions/jorchbot/output-filter.ts`
+- [ ] Filtrar mensajes segun modo antes de enviar al canal
+- [ ] Los mensajes filtrados se guardan en logs (tabla `messages`) siempre
+- [ ] Aprobaciones SIEMPRE se envian al chat independientemente del modo
+- [ ] Errores SIEMPRE se envian al chat independientemente del modo
+
+```typescript
+interface OutputFilter {
+  shouldSendToChat(message: SessionMessage, mode: OutputMode): boolean;
+}
+```
+
+**Criterio de aceptacion**: En modo `silent`, solo se ven aprobaciones y resultado final en el chat. En `/logs`, se ve todo.
+
+### 5.3 Comando /mode
 
 ```
-[Yes]  [Yes + feedback]  [No]
+/mode <approval|output> [project]
 ```
 
-- [ ] Agregar boton "Yes + feedback" al mensaje de aprobacion
-- [ ] Al tocar "Yes + feedback", JorchBot entra en **modo escucha**
-- [ ] El siguiente mensaje de texto del user se captura como feedback
-- [ ] Se envia a Claude Code como contexto junto con la aprobacion
-- [ ] Timeout del modo escucha: 2 minutos (si no escribe, cancela)
-- [ ] Indicator visual: `[frontend] ✏️ Esperando tu feedback...`
+| Comando               | Accion                                     |
+| --------------------- | ------------------------------------------ |
+| `/mode plan`          | Cambia sesion activa a plan mode           |
+| `/mode auto`          | Cambia sesion activa a auto-accept         |
+| `/mode confirm`       | Cambia sesion activa a confirm (default)   |
+| `/mode verbose`       | Cambia sesion activa a verbose output      |
+| `/mode summary`       | Cambia sesion activa a solo resumen        |
+| `/mode silent`        | Cambia sesion activa a silent              |
+| `/mode auto frontend` | Cambia sesion especifica                   |
+| `/mode`               | Muestra modos actuales de la sesion activa |
+
+**Flujo**:
 
 ```
-Bot:  [frontend] Claude quiere ejecutar:
-      > Edit: src/components/Login.tsx (lineas 34-42)
-      > Agregar validacion con regex
+User: /mode auto
+Bot:  [frontend] Modo cambiado a auto-accept.
+      Claude ejecutara sin pedir aprobacion.
+      Usa /mode confirm para volver al modo normal.
 
-      [Yes] [Yes + feedback] [No]
+User: /mode silent
+Bot:  [frontend] Output cambiado a silent.
+      Solo veras aprobaciones y resultado final.
 
+User: /mode
+Bot:  [frontend] Modos actuales:
+      Aprobacion: auto (Claude ejecuta sin preguntar)
+      Output: silent (solo resultado final)
+```
+
+- [ ] Registrar `/mode` en CommandRouter
+- [ ] Detectar automaticamente si el argumento es approval o output mode
+- [ ] Persistir cambio en DB (tabla `sessions`)
+- [ ] Enviar confirmacion al chat con descripcion del modo
+
+**Criterio de aceptacion**: `/mode auto` cambia el modo, y el siguiente mensaje a Claude Code se ejecuta sin aprobacion.
+
+### 5.4 Flujo "Yes + feedback"
+
+Replica la funcionalidad de escribir texto en lugar de Tab en Claude Code CLI.
+El usuario aprueba Y envia instrucciones adicionales.
+
+**Botones de aprobacion actualizados** (3 botones Kapso):
+
+```
+[frontend] Claude quiere ejecutar:
+> Edit: src/components/Login.tsx (lineas 34-42)
+> Agregar validacion de email con regex
+
+[Yes] [Yes + feedback] [No]
+```
+
+**Flujo de "Yes + feedback"**:
+
+```
 User: *toca "Yes + feedback"*
+Bot:  [frontend] Escribe tu feedback para Claude:
 
-Bot:  [frontend] ✏️ Escribe tu feedback para Claude:
-
-User: usa zod en vez de regex, y agrega tests unitarios
-
-Bot:  [frontend] ✓ Aprobado con feedback.
-      Claude recibio: "usa zod en vez de regex, y agrega tests unitarios"
+User: usa zod para la validacion, no regex
+Bot:  [frontend] Aprobado con feedback.
+      Claude recibio: "usa zod para la validacion, no regex"
       Ejecutando...
 ```
 
 - [ ] Implementar estado `awaiting_feedback` en la sesion
-- [ ] Mientras esta en `awaiting_feedback`, los mensajes NO van a Claude directamente
-- [ ] Cancelar con `/cancel` o timeout
+- [ ] Cuando el usuario toca "Yes + feedback":
+  1. Sesion entra en modo `awaiting_feedback`
+  2. JorchBot envia "Escribe tu feedback para Claude:"
+  3. El siguiente mensaje de texto se toma como feedback
+  4. Se envia aprobacion + feedback a Claude Code (via stdin del proceso)
+  5. Sesion sale de `awaiting_feedback`
+- [ ] Si el usuario envia un comando (`/algo`) mientras esta en `awaiting_feedback`:
+  - Se cancela el feedback
+  - Se ejecuta el comando normalmente
+  - La aprobacion queda pendiente
+- [ ] Timeout de `awaiting_feedback`: 5 minutos, luego cancelar y re-enviar botones
 
-**Criterio de aceptacion**: "Yes + feedback" funciona end-to-end.
+**Criterio de aceptacion**: "Yes + feedback" permite aprobar con instrucciones que Claude Code recibe y aplica.
 
-### 5.2 Modos de aprobacion
+### 5.5 Listas Kapso para Aprobaciones Complejas
 
-- [ ] Implementar comando `/mode <mode> [project]`
-- [ ] Guardar modo en DB (tabla sessions, campo mode)
-- [ ] Aplicar modo al crear sesion desde Jorchfile (`approve = auto`)
+Cuando Claude Code propone multiples acciones, usar listas de Kapso (hasta 10 items)
+en vez de solo 3 botones.
 
-**Modo `confirm`** (default):
-
-- Cada tool use de Claude Code genera un mensaje de aprobacion via hooks `PreToolUse`
-- Botones: [Yes] [Yes + feedback] [No]
-- System prompt: `CONFIRM_MODE_PROMPT` (describe antes de cada accion, espera aprobacion)
-- Hooks: activos para `Bash|Write|Edit|NotebookEdit` (bloquean hasta WhatsApp approve/reject)
-
-**Modo `plan`**:
-
-- System prompt: `PLAN_MODE_PROMPT` (investigar → presentar plan → esperar aprobacion → ejecutar)
-- Hooks: activos pero el system prompt hace que Claude presente un plan global primero
-- Claude describe lo que hara ANTES de hacerlo
-- Usuario aprueba el plan completo conversacionalmente
-- Luego Claude ejecuta paso a paso, con aprobacion individual via hooks
-
-**Modo `auto`**:
-
-- System prompt: `AUTO_MODE_PROMPT` (ejecutar directamente, reportar al final)
-- Hooks: **desactivados** — se genera `.claude/settings.local.json` sin hooks `PreToolUse`
-- Solo usa `--dangerously-skip-permissions` (ya requerido en todos los modos para headless)
-- Claude ejecuta sin preguntar
-- Output se envia segun output mode
-- ADVERTENCIA al activar: `"⚠️ Modo auto activado. Claude ejecutara sin pedir permiso."`
+**Trigger**: Claude Code pide aprobacion para 2+ acciones en una sola peticion.
 
 ```
-User: /mode plan
-Bot:  [frontend] ✓ Modo cambiado a: plan
-      Claude presentara un plan antes de ejecutar cambios.
+[frontend] Claude quiere ejecutar 3 acciones:
 
-User: /mode auto
-Bot:  [frontend] ⚠️ Modo cambiado a: auto
-      Claude ejecutara SIN pedir permiso.
-      Usa /mode confirm para volver al modo seguro.
+1. Edit: src/components/Login.tsx (validacion de email)
+2. Edit: package.json (agregar zod)
+3. Bash: npm install
 
-User: /mode confirm
-Bot:  [frontend] ✓ Modo cambiado a: confirm
-      Claude pedira aprobacion por cada accion.
+Ver opciones (toca para expandir lista)
+  +----------------------------------+
+  | Yes - Aprobar todo               |
+  | Yes + feedback                   |
+  | No - Rechazar todo               |
+  | Ver diff completo                |
+  | Ver razonamiento de Claude       |
+  | Aprobar solo accion 1            |
+  | Aprobar solo accion 2            |
+  | Aprobar solo accion 3            |
+  +----------------------------------+
 ```
 
-**Criterio de aceptacion**: Los 3 modos funcionan y afectan el comportamiento de Claude Code.
-
-### 5.3 Modos de output
-
-- [ ] Implementar `/mode verbose|summary|silent [project]`
-- [ ] Guardar en DB (campo outputMode)
-
-**Modo `verbose`** (default):
-
-- Cada accion de Claude se reporta: archivo leido, editado, comando ejecutado
-- Streaming de output (batched cada 3 segundos)
-- Formato: `[frontend] Leyendo src/Login.tsx...`
-
-**Modo `summary`**:
-
-- Solo envia: inicio, resultado final, errores
-- No envia acciones intermedias
-- Formato: `[frontend] Trabajando...` → `[frontend] ✓ 3 archivos editados. Context: 15%`
-
-**Modo `silent`**:
-
-- Solo envia: aprobaciones pendientes + resultado final
-- Ideal cuando estas en reunion
-- Formato: (nada durante ejecucion) → `[frontend] ✓ Completado. Context: 15%`
-
-**Combinaciones**:
-
-| Approval          | Output                                 | Resultado               |
-| ----------------- | -------------------------------------- | ----------------------- |
-| confirm + verbose | Maximo detalle y control               | Default ideal           |
-| confirm + summary | Ves poco pero controlas todo           | Para estar semi-atento  |
-| plan + verbose    | Ves el plan detallado, luego ejecucion | Para tareas grandes     |
-| auto + verbose    | Ves todo pero no apruebas nada         | Confianza + visibilidad |
-| auto + silent     | No ves nada, solo resultado            | Maximo autonomia        |
-
-**Criterio de aceptacion**: Cambiar a silent elimina mensajes intermedios.
-
-### 5.4 Listas de Kapso para aprobaciones complejas
-
-Cuando Claude propone multiples acciones, usar **lista interactiva** (hasta 10 items):
-
-```
-[frontend] Claude quiere ejecutar 4 acciones:
-
-▼ Selecciona una opcion
-  ┌─────────────────────────────────────────────┐
-  │ ✅ Aprobar todas (4 acciones)                │
-  │ ✅ Aprobar + feedback                        │
-  │ ❌ Rechazar todas                            │
-  │ ──────────────────────────────                │
-  │ 👁️ Ver todas las acciones                    │
-  │ 👁️ Ver razonamiento de Claude                │
-  │ ──────────────────────────────                │
-  │ ✅ Solo: Edit Login.tsx                       │
-  │ ✅ Solo: Edit validation.ts                   │
-  │ ❌ Skip: Bash npm install                    │
-  │ ❌ Skip: Edit package.json                   │
-  └─────────────────────────────────────────────┘
-```
-
-- [ ] Detectar cuando Claude propone 2+ acciones
-- [ ] Generar lista dinamica con cada accion individual
-- [ ] Permitir aprobar/rechazar acciones individualmente
-- [ ] "Ver todas las acciones" envia detalle de cada una
-- [ ] "Ver razonamiento" envia el texto de Claude explicando por que
-
-**Criterio de aceptacion**: Lista interactiva aparece con 2+ acciones de Claude.
-
-### 5.5 Smart Message Chunking
-
-- [ ] Crear `src/messages/chunker.ts`
-
-**Algoritmo de chunking**:
+- [ ] Detectar cuando la aprobacion involucra multiples acciones
+- [ ] Construir lista de Kapso con opciones granulares
+- [ ] "Ver diff completo": envia el diff como mensaje adicional, re-envia lista
+- [ ] "Ver razonamiento": envia el reasoning de Claude, re-envia lista
+- [ ] Aprobacion individual: aprueba solo esa accion, rechaza las demas
+- [ ] Mapear seleccion del usuario a respuesta de Claude Code hooks
 
 ```typescript
-export class MessageChunker {
-  // Divide un mensaje largo respetando limites logicos
-  chunk(content: string, maxLength: number = 4096): string[];
+interface ComplexApproval {
+  sessionId: string;
+  actions: ApprovalAction[];
+  kapsoListId: string;
+}
 
-  // Decide la estrategia de envio
-  async send(adapter: KapsoAdapter, to: string, sessionTag: string, content: string): Promise<void>;
+interface ApprovalAction {
+  id: string;
+  tool: string; // "Edit", "Bash", etc.
+  description: string;
+  details: string; // diff, comando, etc.
 }
 ```
 
-**Reglas de splitting**:
+**Criterio de aceptacion**: Aprobacion con 3+ acciones muestra lista Kapso. El usuario puede aprobar acciones individuales.
 
-1. Si cabe en 1 mensaje (< 4096): enviar directo
-2. Si cabe en 2-3 mensajes (< 12288): split inteligente
-   - Nunca cortar en medio de un bloque de codigo (```)
-   - Preferir cortar en lineas vacias
-   - Header en cada chunk: `[frontend] (1/3)`, `(2/3)`, etc.
-3. Si es mas largo (> 12288): truncar + adjuntar documento
-   - Primer mensaje: resumen (primeras ~3500 chars)
-   - Segundo mensaje: documento TXT adjunto con contenido completo
+### 5.6 Smart Chunking de Mensajes Largos
 
-**Criterio de aceptacion**: Output de 50KB se envia como resumen + documento adjunto.
+WhatsApp limita a 4,096 caracteres por mensaje. JorchBot maneja esto en 4 niveles.
 
-### 5.6 Timeout y pause de aprobaciones
+**Nivel 1 — Smart Split (output < 12K chars)**:
 
-- [ ] Aprobacion pendiente > 10 minutos → re-enviar recordatorio
-- [ ] Aprobacion pendiente > 60 minutos → pausar sesion
-- [ ] Notificar: `[frontend] ⏸️ Sesion pausada (timeout de aprobacion)`
-- [ ] Reanudar con `/resume <project>` o respondiendo a la aprobacion
-- [ ] Guardar aprobaciones pendientes en DB (tabla approvals)
-- [ ] Al reiniciar Gateway, restaurar aprobaciones pendientes
+- Divide por lineas vacias o secciones naturales
+- Nunca corta en medio de un bloque de codigo
+- Header: `[frontend] (1/3)`, `[frontend] (2/3)`, etc.
+- Maximo 3 chunks seguidos
+
+**Nivel 2 — Truncate + Document (output > 12K chars)**:
+
+- Envia resumen truncado (primer chunk)
+- Envia output completo como documento adjunto (TXT via Kapso)
+- `[frontend] Output largo (45KB). Resumen arriba, completo en documento adjunto.`
+
+**Nivel 3 — Streaming Batched (modo verbose, tiempo real)**:
+
+- Acumula output en buffer de 3 segundos
+- Envia batch cada 3 segundos (si hay contenido nuevo)
+- Respeta limite de 4096 por batch
+- Al final envia resumen con resultado
+
+**Nivel 4 — Solo resultado (modo summary/silent)**:
+
+- Solo envia resultado final (exito/error + resumen corto)
+- Todo lo demas va a logs
+
+```typescript
+// src/channels/kapso/chunker.ts
+interface ChunkOptions {
+  maxChars: number; // 4096 default
+  maxChunks: number; // 3 default
+  sessionPrefix: string; // "[frontend]"
+  outputMode: OutputMode;
+}
+
+interface ChunkResult {
+  chunks: string[];
+  hasDocument: boolean;
+  documentContent?: string;
+  documentName?: string;
+}
+
+function chunkMessage(content: string, options: ChunkOptions): ChunkResult;
+```
+
+- [ ] Implementar `chunkMessage()` con los 4 niveles
+- [ ] Respetar bloques de codigo (no cortar dentro de ``` blocks)
+- [ ] Respetar limites de linea (no cortar palabras)
+- [ ] Generar documento adjunto para output largo (TXT)
+- [ ] Enviar documento via API de Kapso (`sendDocument`)
+- [ ] Rate limiting: no mas de 5 mensajes/segundo al mismo chat
+
+**Criterio de aceptacion**: Output de 50K chars se envia como resumen + documento adjunto. Output de 8K chars se divide en 2 chunks sin cortar codigo.
+
+### 5.7 Approval Timeout
+
+Si el usuario no responde a una aprobacion, JorchBot gestiona timeouts.
+
+| Tiempo | Accion (sesion activa)            | Accion (sesion background)      |
+| ------ | --------------------------------- | ------------------------------- |
+| 10 min | Re-envia recordatorio con botones | No spamea, marca como pendiente |
+| 1 hora | Pausa la sesion de Claude Code    | Pausa la sesion                 |
 
 ```
--- 10 minutos sin respuesta --
-Bot: [frontend] 🔔 Recordatorio: aprobacion pendiente
-     > Edit: Login.tsx (agregar validacion)
-     [Yes] [Yes + feedback] [No]
+-- A los 10 minutos (sesion activa) --
+[frontend] Recordatorio: aprobacion pendiente hace 10 min.
+> Edit: src/components/Login.tsx
+[Yes] [Yes + feedback] [No]
 
--- 60 minutos sin respuesta --
-Bot: [frontend] ⏸️ Sesion pausada por timeout.
-     Responde a la aprobacion o escribe /resume frontend
+-- A la 1 hora --
+[frontend] Sesion pausada por timeout de aprobacion.
+Responde a la aprobacion pendiente o escribe /resume frontend.
 ```
 
-**Criterio de aceptacion**: Timeout funciona y la sesion se pausa/reanuda correctamente.
+- [ ] Timer por aprobacion pendiente (configurable en config.json)
+- [ ] `approval_reminder_minutes: 10` (default)
+- [ ] `approval_timeout_minutes: 60` (default)
+- [ ] Al pausar: detener Claude Code subprocess, mantener session_id
+- [ ] `/resume <project>`: re-enviar aprobacion pendiente y reactivar sesion
+- [ ] En `/list`, mostrar sesiones con aprobaciones pendientes
+
+```
+User: /list
+Bot:  Sesiones activas:
+      * frontend (enfocada) - Context: 23% - APROBACION PENDIENTE (15 min)
+      o backend (background) - Context: 8% - idle
+```
+
+**Criterio de aceptacion**: A los 10 min se re-envia recordatorio. A la 1 hora se pausa la sesion.
+
+### 5.8 Streaming Batched
+
+Para output en tiempo real (ej: `npm install` con muchas lineas), enviar
+en batches en vez de linea por linea.
+
+- [ ] Buffer de 3 segundos para acumular output de Claude Code
+- [ ] Si el buffer tiene contenido al expirar, enviar como un mensaje
+- [ ] Respetar limite de 4096 chars por batch
+- [ ] Indicador de "escribiendo..." mientras se acumula
+- [ ] Al finalizar el comando, flush inmediato del buffer restante
+
+**Criterio de aceptacion**: `npm install` muestra progreso cada 3 segundos en vez de spamear linea por linea.
+
+---
+
+## NO se construye en esta fase
+
+- Aprobaciones parciales de diff (aprobar parte de un archivo) — demasiado complejo
+- Voice messages (enviar aprobacion por voz) — fuera de scope
+- Reacciones de WhatsApp como shortcuts (ej: thumbs up = approve) — Kapso no lo soporta aun
+- Integracion con Telegram (Fase 7 maneja UX de Telegram)
 
 ---
 
 ## Definicion de "Terminado"
 
-- [ ] "Yes + feedback" funciona end-to-end
-- [ ] `/mode plan`, `/mode auto`, `/mode confirm` funcionan
-- [ ] `/mode verbose`, `/mode summary`, `/mode silent` funcionan
-- [ ] Listas de Kapso aparecen con 2+ acciones
-- [ ] Smart chunking divide mensajes correctamente
-- [ ] Documentos adjuntos se envian para output largo
-- [ ] Timeout + pause funcionan
-- [ ] Tests pasan, CI en verde
+- [ ] Modos `confirm`, `plan`, `auto` funcionan y afectan el comportamiento de Claude Code
+- [ ] Modos `verbose`, `summary`, `silent` filtran output correctamente
+- [ ] `/mode` cambia modos en tiempo real sin reiniciar sesion
+- [ ] "Yes + feedback" permite aprobar con instrucciones
+- [ ] Aprobaciones complejas (3+ acciones) usan listas Kapso
+- [ ] Output largo se divide en chunks o se envia como documento
+- [ ] Streaming batched muestra progreso cada 3 segundos
+- [ ] Timeout de aprobacion re-envia a 10 min, pausa a 1 hora
+- [ ] Columnas `approvalMode` y `outputMode` persistidas en DB
+- [ ] Todos los tests pasan
+- [ ] `pnpm check` pasa sin errores
+
+---
+
+## Notas Tecnicas
+
+- Los modos se combinan: `auto + silent` es el modo mas autonomo. `confirm + verbose` es el default mas detallado.
+- El cambio de modo es instantaneo y reversible.
+- `plan` mode funciona inyectando instrucciones en el system prompt de Claude Code, NO es un feature nativo del CLI headless.
+- Kapso permite maximo 3 botones O 1 lista de hasta 10 items por mensaje interactivo. No ambos.
+- El streaming batched debe respetar el rate limit de Kapso (30 msg/s global, pero recomendado <5/s).
+- Los documentos adjuntos via Kapso usan `sendDocument` y soportan hasta 100MB.

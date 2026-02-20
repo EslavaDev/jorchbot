@@ -1,176 +1,251 @@
 # Fase 6 - GUI de Configuracion
 
 > **Estado**: Pendiente
-> **Dependencia**: Fase 4 (necesita tunnels para acceder remotamente)
+> **Dependencia**: Fase 4
 > **Entregable**: Dashboard web accesible via Tailscale Serve
-> **Al terminar**: Configurar JorchBot, ver sesiones, logs, y tunnels desde el navegador
+> **Al terminar**: Abres `https://<device>.tailnet.ts.net:18791` desde tu celular y ves sesiones activas, logs en tiempo real, tunnels, y puedes editar el Jorchfile visualmente
 
 ---
 
 ## Nota Arquitectural (rev. 2 — DeepWiki)
 
-> **Decision: Extender Control UI existente de OpenClaw (puerto 18789)**
+> OpenClaw ya tiene una **Control UI** servida como assets estaticos desde el Gateway
+> en el puerto `basePort + 2` (18791 en loopback). JorchBot extiende esta UI
+> en vez de crear una nueva desde cero.
 >
-> OpenClaw ya tiene una Control UI servida como assets estaticos desde el mismo
-> puerto del Gateway (18789). La GUI de JorchBot debe **extender esta UI existente**,
-> NO crear una GUI nueva desde cero.
+> **Capa 1 (reusar)**: Control UI framework, static asset serving desde Gateway,
+> WebSocket real-time desde el Gateway, health endpoint.
 >
-> El code base de la UI esta en `ui/` (Lit 3.x web components, build con Vite 7.x).
-> Ver `docs/gui-jorchbot.md` para hallazgos tecnicos detallados.
+> **Capa 2 (construir)**: Dashboard de sesiones JorchBot, logs viewer,
+> tunnel status, Jorchfile editor, settings page.
+>
+> **Accesibilidad**: La GUI es accesible via Tailscale Serve (privado dentro
+> del tailnet). El comando `/gui` envia la URL al chat.
+
+---
 
 ## Objetivo
 
-Extender la Control UI existente de OpenClaw para agregar funcionalidades de JorchBot.
-Para tareas que son mas comodas en una GUI (editar Jorchfile, ver logs, monitorear
-sesiones) en vez de hacerlo todo por mensajes de texto.
+Extender la Control UI existente de OpenClaw para incluir un dashboard completo
+de JorchBot: estado de sesiones, logs en tiempo real, gestion de tunnels,
+editor visual del Jorchfile, y configuracion del sistema.
 
 ---
 
 ## Entregables
 
-1. Dashboard principal (estado general) — extendiendo Control UI existente
-2. Session monitor (sesiones en tiempo real)
-3. Jorchfile editor (visual)
-4. Log viewer (con busqueda y filtros)
-5. Tunnel status panel
-6. Settings page
-7. Accesible via Tailscale Serve (privado, tailnet only)
+1. Dashboard principal (sesiones, context %, modos)
+2. Logs viewer en tiempo real (por sesion)
+3. Tunnel status (activos, URLs, health)
+4. Jorchfile editor visual
+5. Settings page (config.json + jorchbot.json)
+6. API endpoints para la GUI (REST + WebSocket)
+7. Comando /gui (envia URL al chat)
+8. Mobile-responsive (usable desde celular)
 
 ---
 
 ## Tareas
 
-### 6.1 Stack tecnico de la GUI
+### 6.1 Evaluar y Extender Control UI de OpenClaw
 
-**Decision (rev. 2)**: Extender la **Control UI existente** de OpenClaw. NO crear GUI nueva.
+OpenClaw sirve la Control UI como assets estaticos en `src/gateway/control-ui.ts`.
 
-- [ ] Montar la Control UI existente de `ui/` en el gateway de JorchBot
-- [ ] Agregar paginas/componentes JorchBot a la UI existente (Lit web components)
-- [ ] Implementar WebSocket server minimo para comunicacion real-time
+- [ ] Auditar Control UI actual: tech stack, estructura, build pipeline
+- [ ] Determinar si extender in-place o crear seccion separada `/jorchbot/`
+- [ ] Evaluar framework UI (OpenClaw puede usar vanilla JS, React, o Svelte)
+- [ ] Definir estrategia de build: assets se compilan y sirven desde Gateway
+- [ ] Asegurar que la GUI funciona en mobile browsers (Safari, Chrome)
 
-**La Control UI de OpenClaw**:
+**Criterio de aceptacion**: GUI extendida compila y se sirve desde el Gateway en puerto 18791.
 
-- Servida en el **mismo puerto del gateway (18789)** — NO basePort+2
-- Assets estaticos en `dist/control-ui/` (build con `pnpm ui:build`)
-- Basada en Lit 3.x web components (`ui/`)
-- WebSocket para comunicacion real-time (HTTP upgrade en el mismo puerto)
+### 6.2 API Endpoints para la GUI
 
-**Endpoints (puerto 18789 — Gateway)**:
+La GUI necesita endpoints REST y WebSocket para obtener datos en tiempo real.
 
-- `https://device.ts.net:18789/` → GUI dashboard (Control UI extendida)
-- `ws://device.ts.net:18789` → WebSocket (HTTP upgrade, mismo puerto)
-- `https://device.ts.net:18789/webhooks/kapso` → Kapso webhooks
+**REST endpoints** (`/api/jorchbot/`):
 
-**Criterio de aceptacion**: Abrir la URL del gateway (puerto 18789) muestra el dashboard de JorchBot.
+| Endpoint                          | Metodo | Descripcion                                 |
+| --------------------------------- | ------ | ------------------------------------------- |
+| `/api/jorchbot/sessions`          | GET    | Lista sesiones con estado, context %, modos |
+| `/api/jorchbot/sessions/:id`      | GET    | Detalle de una sesion                       |
+| `/api/jorchbot/sessions/:id/logs` | GET    | Logs de una sesion (paginados)              |
+| `/api/jorchbot/tunnels`           | GET    | Tunnels activos con URLs y health           |
+| `/api/jorchbot/jorchfile`         | GET    | Contenido del Jorchfile parseado            |
+| `/api/jorchbot/jorchfile`         | PUT    | Actualizar Jorchfile                        |
+| `/api/jorchbot/config`            | GET    | Configuracion actual                        |
+| `/api/jorchbot/config`            | PATCH  | Actualizar configuracion                    |
+| `/api/jorchbot/status`            | GET    | Estado general del sistema                  |
 
-### 6.2 Dashboard principal
+**WebSocket events** (via WebSocket del Gateway):
 
-- [ ] Estado del Gateway (uptime, version)
-- [ ] Sesiones activas (cards con nombre, %, modo, estado)
-- [ ] Tunnels activos (URLs clickeables)
-- [ ] Ultimo activity por sesion
-- [ ] Quick actions: crear sesion, abrir tunnel
+| Evento              | Payload        | Descripcion                              |
+| ------------------- | -------------- | ---------------------------------------- |
+| `session:updated`   | `SessionInfo`  | Sesion cambio de estado, context %, modo |
+| `session:message`   | `MessageInfo`  | Nuevo mensaje en una sesion (para logs)  |
+| `tunnel:updated`    | `TunnelInfo`   | Tunnel cambio de estado                  |
+| `approval:pending`  | `ApprovalInfo` | Nueva aprobacion pendiente               |
+| `approval:resolved` | `ApprovalInfo` | Aprobacion resuelta                      |
+
+- [ ] Implementar endpoints REST en `src/gateway/api/jorchbot-api.ts`
+- [ ] Registrar endpoints en el server Express del Gateway
+- [ ] Implementar eventos WebSocket para real-time updates
+- [ ] Autenticacion: misma auth que Control UI (localhost o Tailscale)
+- [ ] Paginacion para logs (query params: `?page=1&limit=50`)
+- [ ] Validacion de input con Zod
+
+**Criterio de aceptacion**: `GET /api/jorchbot/sessions` retorna JSON con sesiones. WebSocket emite eventos en tiempo real.
+
+### 6.3 Dashboard Principal
+
+Vista principal que muestra el estado de todas las sesiones de JorchBot.
+
+**Contenido del dashboard**:
 
 ```
-┌─────────────────────────────────────────┐
-│  JorchBot Dashboard              v0.1.0 │
-│  Gateway: running (2h 34m)              │
-├─────────────────────────────────────────┤
-│                                         │
-│  Sessions                               │
-│  ┌─────────────┐  ┌─────────────┐      │
-│  │ ● frontend  │  │ ○ backend   │      │
-│  │ Context: 18%│  │ Context: 8% │      │
-│  │ confirm+    │  │ confirm+    │      │
-│  │ verbose     │  │ verbose     │      │
-│  │ Last: 2m ago│  │ Last: 15m   │      │
-│  └─────────────┘  └─────────────┘      │
-│                                         │
-│  Tunnels                                │
-│  frontend → mi-pc.ts.net:3000 (Serve)  │
-│  backend  → mi-pc.ts.net:3001 (Serve)  │
-│  gui      → mi-pc.ts.net:18789(Serve)  │
-│                                         │
-│  WhatsApp: connected (Kapso)            │
-│  Telegram: disabled                     │
-└─────────────────────────────────────────┘
++---------------------------------------------------+
+|  JorchBot Dashboard                    [Settings]  |
++---------------------------------------------------+
+|                                                     |
+|  Sesiones Activas                                  |
+|  +-----------------------------------------------+  |
+|  | * frontend (enfocada)                         |  |
+|  |   Context: 23% [===========               ]   |  |
+|  |   Mode: confirm + verbose                     |  |
+|  |   Tunnel: https://mi-pc.ts.net:3000 (Serve)   |  |
+|  |   [Logs] [Switch] [Stop] [Compact]            |  |
+|  +-----------------------------------------------+  |
+|  | o backend (background)                        |  |
+|  |   Context: 45% [======================    ]   |  |
+|  |   Mode: auto + silent                         |  |
+|  |   Tunnel: none                                |  |
+|  |   APROBACION PENDIENTE (5 min)                |  |
+|  |   [Logs] [Focus] [Approve] [Stop]             |  |
+|  +-----------------------------------------------+  |
+|                                                     |
+|  Tunnels Activos                                   |
+|  +-----------------------------------------------+  |
+|  | Serve: frontend → :3000 (healthy)             |  |
+|  | Serve: gui → :18789 (healthy)                 |  |
+|  +-----------------------------------------------+  |
+|                                                     |
+|  Sistema                                           |
+|  Uptime: 3h 24m | DB: 2.1 MB | Gateway: healthy   |
++---------------------------------------------------+
 ```
 
-**Criterio de aceptacion**: Dashboard muestra estado real en tiempo real.
+- [ ] Componente de lista de sesiones con estado en tiempo real
+- [ ] Barra de progreso de context window por sesion
+- [ ] Indicador de aprobaciones pendientes
+- [ ] Botones de accion rapida (focus, stop, compact, approve)
+- [ ] Seccion de tunnels activos con health status
+- [ ] Seccion de sistema (uptime, DB size, gateway health)
+- [ ] Auto-refresh via WebSocket (no polling)
 
-### 6.3 Session monitor
+**Criterio de aceptacion**: Dashboard muestra sesiones con context % actualizado en tiempo real.
 
-- [ ] Vista detallada por sesion
-- [ ] Output de Claude Code en tiempo real (streaming via WebSocket)
-- [ ] Context window bar visual
-- [ ] Boton para cambiar modo
-- [ ] Boton para compact
-- [ ] Boton para stop
-- [ ] Historial de acciones (timeline)
+### 6.4 Logs Viewer
 
-**Criterio de aceptacion**: Ver output de Claude Code en la GUI mientras se trabaja por WP.
+Vista de logs por sesion con scroll infinito y busqueda.
 
-### 6.4 Jorchfile editor
+- [ ] Lista de mensajes por sesion (cronologico)
+- [ ] Color coding por tipo: text (blanco), command (azul), error (rojo), approval (amarillo)
+- [ ] Busqueda de texto en logs
+- [ ] Filtro por tipo de mensaje
+- [ ] Auto-scroll para nuevos mensajes (con opcion de pausar)
+- [ ] Exportar logs como TXT o JSON
+- [ ] Click en una sesion del dashboard → abre logs
 
-- [ ] Editor de texto con syntax highlighting
-- [ ] Validacion en tiempo real (errores en rojo)
-- [ ] Guardar → hot-reload automatico
-- [ ] Preview de la config parseada (proyectos, comandos)
-- [ ] Templates/snippets para projects comunes (Next.js, Django, etc.)
+**Criterio de aceptacion**: Logs viewer muestra mensajes en tiempo real con busqueda funcional.
 
-**Criterio de aceptacion**: Editar Jorchfile en la GUI y ver cambios reflejados inmediatamente.
+### 6.5 Jorchfile Editor
 
-### 6.5 Log viewer
+Editor visual del Jorchfile con validacion.
 
-- [ ] Logs por sesion con filtros (tipo, fecha, busqueda)
-- [ ] Scroll infinito
-- [ ] Syntax highlighting para codigo en los logs
-- [ ] Export a TXT/JSON
-- [ ] Busqueda full-text
+- [ ] Parsear Jorchfile y mostrar como formulario estructurado
+- [ ] Cada PROJECT como seccion expandible
+- [ ] Campos editables: path, dev, build, test, tunnel, port, instructions, approve, output
+- [ ] Agregar/eliminar proyectos
+- [ ] Agregar/eliminar comandos custom
+- [ ] Validacion en tiempo real (path existe, puerto valido, etc.)
+- [ ] Boton "Save" que escribe el Jorchfile en disco
+- [ ] Boton "Reload" que re-lee el Jorchfile del disco
+- [ ] Alternativa: editor de texto plano con syntax highlighting
 
-**Criterio de aceptacion**: Buscar "error" en logs de backend muestra todos los errores.
+**Criterio de aceptacion**: Editar un proyecto en la GUI y guardar actualiza el Jorchfile en disco. Hot-reload lo detecta (Fase 3).
 
-### 6.6 Tunnel status panel
+### 6.6 Settings Page
 
-- [ ] Lista de tunnels activos con URLs clickeables
-- [ ] Crear/detener tunnels desde la GUI
-- [ ] Configurar reverse proxy routes (para Funnel)
-- [ ] Indicador de privado vs publico
+Configuracion del sistema JorchBot.
 
-**Criterio de aceptacion**: Crear un tunnel desde la GUI y ver la URL.
+- [ ] Editor para `~/.jorchbot/config.json` (JorchBot config)
+- [ ] Secciones: General, Database, Logging, Channels, Tunnels
+- [ ] Cada campo con descripcion y valor default
+- [ ] Validacion con Zod schema
+- [ ] Guardar y recargar config sin reiniciar Gateway
+- [ ] Mostrar info del sistema: version, Node.js, pnpm, Tailscale status
 
-### 6.7 Settings page
+**Criterio de aceptacion**: Cambiar un setting en la GUI lo persiste en config.json y aplica sin reiniciar.
 
-- [ ] Kapso API key (con mascara)
-- [ ] Telegram bot token (con mascara)
-- [ ] Tailscale status
-- [ ] Log retention settings
-- [ ] Default modes (approve, output)
-- [ ] Approval timeouts
-- [ ] Gateway port/host
+### 6.7 Comando /gui
 
-**Criterio de aceptacion**: Cambiar settings desde la GUI y que apliquen sin reiniciar.
+- [ ] `/gui` envia al chat la URL de la GUI
+- [ ] Detecta automaticamente si hay Tailscale Serve activo en el puerto de la GUI
+- [ ] Si no hay tunnel, ofrece levantarlo
 
-### 6.8 Tailscale Serve para la GUI
+```
+User: /gui
+Bot:  GUI de JorchBot:
+      https://mi-pc.tailnet.ts.net:18791
 
-- [ ] Al iniciar JorchBot, auto-exponer Control UI via Tailscale Serve
-- [ ] URL: `https://<device>.<tailnet>.ts.net:18789` (mismo puerto del gateway)
-- [ ] Solo accesible desde dispositivos del tailnet
-- [ ] Mostrar URL en terminal al iniciar y via `/gui` en WP
+      Accesible desde cualquier dispositivo en tu tailnet.
+      Abre desde tu celular para gestionar sesiones.
+```
 
-**Criterio de aceptacion**: Acceder a la GUI desde el celular via Tailscale en puerto 18789.
+**Criterio de aceptacion**: `/gui` envia URL funcional al chat.
+
+### 6.8 Mobile Responsive
+
+- [ ] Toda la GUI funciona en pantallas de celular (320px - 428px width)
+- [ ] Touch-friendly: botones grandes, no hover-dependent
+- [ ] Dashboard compacto para mobile
+- [ ] Logs viewer con scroll touch
+- [ ] Jorchfile editor usable en mobile (formulario, no texto plano)
+
+**Criterio de aceptacion**: La GUI es usable desde Safari/Chrome en iPhone/Android.
+
+---
+
+## NO se construye en esta fase
+
+- API Keys management (Fase 8)
+- Analytics y metricas de uso
+- Temas (dark mode, etc.) — solo default
+- Notificaciones push desde la GUI
+- Chat interface en la GUI (se usa WhatsApp/Telegram para eso)
 
 ---
 
 ## Definicion de "Terminado"
 
-- [ ] Dashboard muestra estado real de sesiones, tunnels, Gateway
-- [ ] Session monitor muestra output en tiempo real
-- [ ] Jorchfile editor con validacion y hot-reload
-- [ ] Log viewer con busqueda y filtros
-- [ ] Tunnel panel con create/stop
-- [ ] Settings editables desde GUI
-- [ ] Extiende Control UI existente de OpenClaw (no GUI nueva)
-- [ ] Accesible via Tailscale Serve en puerto 18789 (mismo puerto del gateway)
-- [ ] `/gui` en WP envia la URL
-- [ ] Tests pasan, CI en verde
+- [ ] Dashboard muestra sesiones, context %, modos, tunnels en tiempo real
+- [ ] Logs viewer funciona con scroll infinito, busqueda, y auto-scroll
+- [ ] Jorchfile editor puede crear, editar, y eliminar proyectos
+- [ ] Settings page puede modificar config sin reiniciar
+- [ ] API endpoints REST y WebSocket funcionan con autenticacion
+- [ ] `/gui` envia URL al chat
+- [ ] GUI es mobile-responsive y usable desde celular
+- [ ] Assets se sirven desde el Gateway en puerto 18791
+- [ ] Todos los tests pasan
+- [ ] `pnpm check` pasa sin errores
+
+---
+
+## Notas Tecnicas
+
+- La Control UI de OpenClaw ya usa el puerto `basePort + 2` (18791). JorchBot extiende esta UI.
+- La autenticacion de la GUI es por red: si estas en el tailnet, tienes acceso. No hay login adicional en esta fase (se agrega en Fase 8).
+- Los endpoints REST son internos (no expuestos a internet). Solo accesibles via tailnet.
+- El WebSocket del Gateway ya existe. Los eventos de JorchBot se agregan al mismo canal.
+- Para el editor de Jorchfile, el backend valida con el mismo parser que usa el Jorchfile Engine (Fase 3).
+- El tech stack de la GUI debe ser consistente con lo que OpenClaw ya usa. Auditar antes de decidir.
