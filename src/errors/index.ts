@@ -105,3 +105,84 @@ export class BackgroundTaskStartError extends JorchBotError {}
 
 /** Background task not found by PID or name */
 export class BackgroundTaskNotFoundError extends JorchBotError {}
+
+// --- Tunnel errors (Phase 4) ---
+
+/** Tailscale binary not found or not in PATH */
+export class TailscaleNotInstalledError extends JorchBotError {
+  constructor(cause?: unknown) {
+    super("Tailscale is not installed or not in PATH. Install: https://tailscale.com/download", {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** Tailscale is installed but not authenticated (not logged in) */
+export class TailscaleNotAuthenticatedError extends JorchBotError {
+  constructor(cause?: unknown) {
+    super("Tailscale is not authenticated. Run: tailscale up", {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** Failed to start a tunnel (Tailscale command failed) */
+export class TunnelStartError extends JorchBotError {
+  constructor(project: string, port: number, mode: string, cause?: unknown) {
+    super(`Failed to start ${mode} tunnel for "${project}" on port ${port}`, {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** Failed to stop a tunnel */
+export class TunnelStopError extends JorchBotError {
+  constructor(tunnelId: string, cause?: unknown) {
+    super(`Failed to stop tunnel ${tunnelId}`, {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** Tunnel not found by ID or project+port */
+export class TunnelNotFoundError extends JorchBotError {
+  constructor(identifier: string) {
+    super(`Tunnel not found: ${identifier}`);
+  }
+}
+
+/** Tailscale Funnel is not enabled on the tailnet/device */
+export class FunnelNotEnabledError extends JorchBotError {
+  constructor(cause?: unknown) {
+    super(
+      "Tailscale Funnel is not enabled on this tailnet/device. " +
+        "Enable in admin console: https://login.tailscale.com/admin",
+      { cause: cause instanceof Error ? cause : undefined },
+    );
+  }
+}
+
+/** Health check detected a tunnel failure */
+export class TunnelHealthCheckError extends JorchBotError {
+  constructor(tunnelId: string, consecutiveFailures: number, cause?: unknown) {
+    super(`Tunnel ${tunnelId} failed health check (${consecutiveFailures} consecutive failures)`, {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** Funnel reverse proxy failed to start */
+export class FunnelProxyStartError extends JorchBotError {
+  constructor(port: number, cause?: unknown) {
+    super(`Failed to start Funnel reverse proxy on port ${port}`, {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** Funnel reverse proxy route conflict (duplicate path) */
+export class FunnelProxyRouteConflictError extends JorchBotError {
+  constructor(path: string) {
+    super(`Funnel proxy route conflict: path "${path}" is already registered`);
+  }
+}

@@ -16,6 +16,7 @@ function makeJorchfile(
       path: p.path,
       commands: p.commands ?? {},
       background: ["dev", "build"],
+      tunnels: [],
       instructions: p.instructions,
     })),
     settings: {},

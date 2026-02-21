@@ -12,6 +12,7 @@ function createTestJorchfile(): Jorchfile {
         path: "/tmp/frontend",
         commands: { dev: "npm run dev", test: "npm run test", build: "npm run build" },
         background: ["dev", "build"],
+        tunnels: [],
       },
       {
         name: "backend",
@@ -19,7 +20,18 @@ function createTestJorchfile(): Jorchfile {
         commands: { dev: "python manage.py runserver", test: "pytest" },
         background: ["dev"],
         port: 8000,
-        tunnel: "serve",
+        tunnels: [{ mode: "serve", port: 8000 }],
+      },
+      {
+        name: "kiwi-auth",
+        path: "/tmp/kiwi",
+        commands: { start: "make start-bg" },
+        background: ["start"],
+        tunnels: [
+          { mode: "serve", port: 3000 },
+          { mode: "serve", port: 5173 },
+          { mode: "funnel", port: 8080, path: "/gateway" },
+        ],
       },
     ],
     settings: {},
@@ -28,7 +40,7 @@ function createTestJorchfile(): Jorchfile {
 
 function createMockDeps(jorchfile: Jorchfile) {
   const sessionManager = {
-    getByProject: vi.fn().mockReturnValue({ project: "frontend" }),
+    getByProject: vi.fn().mockReturnValue({ id: "sess-1", project: "frontend" }),
     getFocused: vi.fn().mockReturnValue({ project: "frontend" }),
     create: vi.fn().mockResolvedValue({ id: "sess-1", project: "frontend" }),
   };
@@ -49,8 +61,8 @@ function createMockDeps(jorchfile: Jorchfile) {
   };
   const tunnelManager = {
     start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-    stopAll: vi.fn().mockResolvedValue(undefined),
+    stopByProjectPort: vi.fn().mockResolvedValue(undefined),
+    stopByProject: vi.fn().mockResolvedValue(undefined),
   };
   const sendReply = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
   const sendButtons = vi
@@ -175,5 +187,55 @@ describe("JorchfileExecutor", () => {
     );
     // Should NOT start a new task
     expect(mocks.taskManager.start).not.toHaveBeenCalled();
+  });
+
+  it("execute() starts multiple tunnels for multi-entry project", async () => {
+    await executor.execute("start", "kiwi-auth", false);
+
+    expect(mocks.tunnelManager.start).toHaveBeenCalledTimes(3);
+    expect(mocks.tunnelManager.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "kiwi-auth",
+        localPort: 3000,
+        mode: "serve",
+        autoConfirm: true,
+      }),
+    );
+    expect(mocks.tunnelManager.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "kiwi-auth",
+        localPort: 5173,
+        mode: "serve",
+        autoConfirm: true,
+      }),
+    );
+    expect(mocks.tunnelManager.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "kiwi-auth",
+        localPort: 8080,
+        mode: "funnel",
+        funnelPath: "/gateway",
+        autoConfirm: true,
+      }),
+    );
+  });
+
+  it("execute() continues starting tunnels after TunnelPendingConfirmation", async () => {
+    const { TunnelPendingConfirmation } = await import("../tunnels/manager.js");
+
+    // First two tunnels succeed, third (funnel) throws PendingConfirmation
+    mocks.tunnelManager.start
+      .mockResolvedValueOnce(undefined) // serve:3000
+      .mockResolvedValueOnce(undefined) // serve:5173
+      .mockImplementationOnce(() => {
+        throw new TunnelPendingConfirmation("tunnel-id");
+      }); // funnel:8080
+
+    await executor.execute("start", "kiwi-auth", false);
+
+    // All 3 tunnels attempted
+    expect(mocks.tunnelManager.start).toHaveBeenCalledTimes(3);
+    // No error reply sent (PendingConfirmation is expected)
+    expect(mocks.sendReply).not.toHaveBeenCalledWith(expect.stringContaining("Failed to start"));
   });
 });

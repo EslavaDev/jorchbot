@@ -18,6 +18,11 @@ describe("JorchBotConfigSchema", () => {
     expect(config.channels.telegram.enabled).toBe(false);
     expect(config.tunnels.defaultMode).toBe("serve");
     expect(config.tunnels.tailscale.enabled).toBe(true);
+    expect(config.tunnels.funnelProxy.port).toBe(9999);
+    expect(config.tunnels.funnelProxy.tailscalePort).toBe(8443);
+    expect(config.tunnels.health.intervalMs).toBe(30_000);
+    expect(config.tunnels.health.failureThreshold).toBe(3);
+    expect(config.tunnels.health.maxRestartAttempts).toBe(3);
     expect(config.approvals.timeoutMinutes).toBe(10);
     expect(config.approvals.pauseTimeoutMinutes).toBe(60);
     expect(config.approvals.skipPermissions).toBe(true);
@@ -81,5 +86,47 @@ describe("JorchBotConfigSchema", () => {
     const config = JorchBotConfigSchema.parse({});
     expect(config.sessions.maxConcurrent).toBe(5);
     expect(config.sessions.shellTimeout).toBe(30_000);
+  });
+
+  it("rejects funnelProxy.tailscalePort outside allowed values", () => {
+    expect(() =>
+      JorchBotConfigSchema.parse({ tunnels: { funnelProxy: { tailscalePort: 9999 } } }),
+    ).toThrow();
+  });
+
+  it("accepts valid funnelProxy.tailscalePort values", () => {
+    for (const port of [443, 8443, 10000]) {
+      const config = JorchBotConfigSchema.parse({
+        tunnels: { funnelProxy: { tailscalePort: port } },
+      });
+      expect(config.tunnels.funnelProxy.tailscalePort).toBe(port);
+    }
+  });
+
+  it("rejects health.intervalMs below 5000", () => {
+    expect(() =>
+      JorchBotConfigSchema.parse({
+        tunnels: { health: { intervalMs: 1000 } },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects health.failureThreshold below 1", () => {
+    expect(() =>
+      JorchBotConfigSchema.parse({
+        tunnels: { health: { failureThreshold: 0 } },
+      }),
+    ).toThrow();
+  });
+
+  it("accepts valid health overrides", () => {
+    const config = JorchBotConfigSchema.parse({
+      tunnels: {
+        health: { intervalMs: 60_000, failureThreshold: 5, maxRestartAttempts: 5 },
+      },
+    });
+    expect(config.tunnels.health.intervalMs).toBe(60_000);
+    expect(config.tunnels.health.failureThreshold).toBe(5);
+    expect(config.tunnels.health.maxRestartAttempts).toBe(5);
   });
 });

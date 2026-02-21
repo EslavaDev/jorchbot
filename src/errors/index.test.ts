@@ -13,6 +13,15 @@ import {
   ClaudeRunnerParseError,
   ClaudeRunnerTimeoutError,
   ClaudeRunnerProcessError,
+  TailscaleNotInstalledError,
+  TailscaleNotAuthenticatedError,
+  TunnelStartError,
+  TunnelStopError,
+  TunnelNotFoundError,
+  FunnelNotEnabledError,
+  TunnelHealthCheckError,
+  FunnelProxyStartError,
+  FunnelProxyRouteConflictError,
 } from "./index.js";
 
 describe("JorchBotError hierarchy", () => {
@@ -31,6 +40,15 @@ describe("JorchBotError hierarchy", () => {
       new ClaudeRunnerParseError("parse"),
       new ClaudeRunnerTimeoutError("timeout"),
       new ClaudeRunnerProcessError("process"),
+      new TailscaleNotInstalledError(),
+      new TailscaleNotAuthenticatedError(),
+      new TunnelStartError("frontend", 3000, "serve"),
+      new TunnelStopError("tunnel-123"),
+      new TunnelNotFoundError("tunnel-456"),
+      new FunnelNotEnabledError(),
+      new TunnelHealthCheckError("tunnel-789", 3),
+      new FunnelProxyStartError(8443),
+      new FunnelProxyRouteConflictError("/frontend"),
     ];
 
     for (const err of cases) {
@@ -57,6 +75,24 @@ describe("JorchBotError hierarchy", () => {
 
     for (const Cls of subclasses) {
       const err = new Cls("test");
+      expect(err).toBeInstanceOf(JorchBotError);
+      expect(err).toBeInstanceOf(Error);
+    }
+
+    // Tunnel errors with custom constructors
+    const tunnelErrors: JorchBotError[] = [
+      new TailscaleNotInstalledError(),
+      new TailscaleNotAuthenticatedError(),
+      new TunnelStartError("p", 3000, "serve"),
+      new TunnelStopError("t-1"),
+      new TunnelNotFoundError("t-2"),
+      new FunnelNotEnabledError(),
+      new TunnelHealthCheckError("t-3", 3),
+      new FunnelProxyStartError(8443),
+      new FunnelProxyRouteConflictError("/p"),
+    ];
+
+    for (const err of tunnelErrors) {
       expect(err).toBeInstanceOf(JorchBotError);
       expect(err).toBeInstanceOf(Error);
     }

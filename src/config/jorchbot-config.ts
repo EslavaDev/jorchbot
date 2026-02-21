@@ -37,9 +37,27 @@ const TailscaleSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
+const FunnelProxySchema = z.object({
+  /** Local port where the FunnelProxy HTTP server listens */
+  port: z.number().int().min(1).max(65535).default(9999),
+  /** Public-facing Tailscale Funnel port (443, 8443, or 10000) */
+  tailscalePort: z.union([z.literal(443), z.literal(8443), z.literal(10000)]).default(8443),
+});
+
+const HealthSchema = z.object({
+  /** Health check interval in milliseconds */
+  intervalMs: z.number().int().min(5000).default(30_000),
+  /** Number of consecutive failures before marking tunnel as error */
+  failureThreshold: z.number().int().min(1).default(3),
+  /** Maximum auto-restart attempts before giving up */
+  maxRestartAttempts: z.number().int().min(0).default(3),
+});
+
 const TunnelsSchema = z.object({
   defaultMode: z.enum(["serve", "funnel"]).default("serve"),
   tailscale: TailscaleSchema.default(TailscaleSchema.parse({})),
+  funnelProxy: FunnelProxySchema.default(FunnelProxySchema.parse({})),
+  health: HealthSchema.default(HealthSchema.parse({})),
 });
 
 const ApprovalsSchema = z.object({

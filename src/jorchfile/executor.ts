@@ -1,10 +1,11 @@
 import { JorchfileProjectNotFoundError, JorchfileCommandNotFoundError } from "../errors/index.js";
 import type { SessionManager } from "../sessions/jorchbot/manager.js";
 import type { ShellRunner } from "../sessions/jorchbot/shell-runner.js";
+import { TunnelPendingConfirmation } from "../tunnels/manager.js";
+import type { TunnelManager } from "../tunnels/manager.js";
 import type { Jorchfile, JorchProject } from "./parser.js";
 import type { PortManager } from "./port-manager.js";
 import type { BackgroundTaskManager } from "./task-manager.js";
-import type { TunnelManager } from "./tunnel.js";
 
 /** Default commands that run in background (used when project has no explicit `background` field) */
 const DEFAULT_BACKGROUND_COMMANDS = ["dev", "build"];
@@ -62,12 +63,12 @@ export class JorchfileExecutor {
 
   /** Stop a tunnel for a project+port (delegates to TunnelManager) */
   async stopTunnel(project: string, port: number): Promise<void> {
-    await this.deps.tunnelManager.stop(project, port);
+    await this.deps.tunnelManager.stopByProjectPort(project, port);
   }
 
   /** Stop all tunnels for a project (delegates to TunnelManager) */
   async stopAllTunnels(project: string): Promise<void> {
-    await this.deps.tunnelManager.stopAll(project);
+    await this.deps.tunnelManager.stopByProject(project);
   }
 
   /**
@@ -206,13 +207,31 @@ export class JorchfileExecutor {
       `[${project.name}] "${commandName}" started (bg, PID ${task.pid}${assignedPort ? `, port ${assignedPort}` : ""})`,
     );
 
-    // Start tunnel if configured
-    if (project.tunnel && assignedPort !== undefined) {
-      await this.deps.tunnelManager.start({
-        project: project.name,
-        port: assignedPort,
-        mode: project.tunnel,
-      });
+    // Start tunnels if configured
+    if (project.tunnels.length > 0) {
+      const session = this.deps.sessionManager.getByProject(project.name);
+      if (session) {
+        for (const entry of project.tunnels) {
+          try {
+            await this.deps.tunnelManager.start({
+              project: project.name,
+              sessionId: session.id,
+              localPort: entry.port,
+              mode: entry.mode,
+              funnelPath: entry.path,
+              autoConfirm: true,
+            });
+          } catch (err: unknown) {
+            // TunnelPendingConfirmation is expected for funnel mode — buttons already sent
+            if (err instanceof TunnelPendingConfirmation) {
+              continue;
+            }
+            await this.deps.sendReply(
+              `[${project.name}] Failed to start tunnel on port ${entry.port}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
     }
   }
 

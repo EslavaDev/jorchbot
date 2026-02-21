@@ -10,6 +10,8 @@ import type { Jorchfile } from "../jorchfile/parser.js";
 import type { BackgroundTask, BackgroundTaskManager } from "../jorchfile/task-manager.js";
 import { SessionManager } from "../sessions/jorchbot/manager.js";
 import { ShellRunner } from "../sessions/jorchbot/shell-runner.js";
+import { TunnelPendingConfirmation } from "../tunnels/manager.js";
+import type { TunnelManager } from "../tunnels/manager.js";
 import { CommandRouter } from "./router.js";
 import type { CommandRouterDeps } from "./router.js";
 
@@ -743,6 +745,7 @@ function createTestJorchfile(): Jorchfile {
         path: "/tmp/frontend",
         commands: { dev: "npm run dev", test: "npm run test", build: "npm run build" },
         background: ["dev", "build"],
+        tunnels: [],
       },
       {
         name: "backend",
@@ -750,7 +753,7 @@ function createTestJorchfile(): Jorchfile {
         commands: { dev: "python manage.py runserver", test: "pytest" },
         background: ["dev"],
         port: 8000,
-        tunnel: "serve",
+        tunnels: [{ mode: "serve", port: 8000 }],
       },
     ],
     settings: {},
@@ -1062,6 +1065,241 @@ describe("CommandRouter (Phase 3)", () => {
 
       expect(executor.execute).not.toHaveBeenCalled();
       expect(sendReply).toHaveBeenCalledWith(expect.stringContaining("Unknown command"));
+    });
+  });
+});
+
+// --- Phase 4 helpers ---
+
+function createMockTunnelManager() {
+  return {
+    start: vi.fn().mockResolvedValue({
+      id: "tunnel-1",
+      sessionId: "s1",
+      project: "frontend",
+      localPort: 3000,
+      assignedPort: 3000,
+      url: "https://mydevice.ts.net:3000",
+      provider: "tailscale-serve",
+      mode: "serve",
+      status: "active",
+      createdAt: new Date(),
+    }),
+    list: vi.fn().mockReturnValue([]),
+    listByProject: vi.fn().mockReturnValue([]),
+    get: vi.fn().mockReturnValue(undefined),
+    findByProjectPort: vi.fn().mockReturnValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
+    stopByProjectPort: vi.fn().mockResolvedValue(undefined),
+    stopByProject: vi.fn().mockResolvedValue(undefined),
+    stopBySession: vi.fn().mockResolvedValue(undefined),
+    stopAll: vi.fn().mockResolvedValue(undefined),
+    confirmFunnel: vi.fn().mockResolvedValue(undefined),
+    cancelFunnel: vi.fn(),
+    health: vi.fn().mockResolvedValue({ tunnels: [], allHealthy: true }),
+    restore: vi.fn().mockResolvedValue(0),
+  };
+}
+
+describe("CommandRouter (Phase 4 — Tunnels)", () => {
+  let tempDir: string;
+  const originalDbPath = process.env.JORCHBOT_DB_PATH;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jorchbot-router-p4-"));
+    process.env.JORCHBOT_DB_PATH = path.join(tempDir, "test.db");
+  });
+
+  afterEach(() => {
+    closeDb();
+    if (originalDbPath === undefined) {
+      delete process.env.JORCHBOT_DB_PATH;
+    } else {
+      process.env.JORCHBOT_DB_PATH = originalDbPath;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe("/tunnel", () => {
+    it("starts serve tunnel for project with port", async () => {
+      const tunnelManager = createMockTunnelManager();
+      const { deps, sendReply, sessionManager } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/tunnel frontend 3000"));
+
+      expect(tunnelManager.start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project: "frontend",
+          localPort: 3000,
+          mode: "serve",
+        }),
+      );
+    });
+
+    it("starts funnel tunnel with --public flag", async () => {
+      const tunnelManager = createMockTunnelManager();
+      tunnelManager.start.mockRejectedValue(new TunnelPendingConfirmation("pending-1"));
+      const { deps, sessionManager } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/tunnel frontend 3000 --public"));
+
+      expect(tunnelManager.start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project: "frontend",
+          localPort: 3000,
+          mode: "funnel",
+        }),
+      );
+    });
+
+    it("shows error when no session exists", async () => {
+      const tunnelManager = createMockTunnelManager();
+      const { deps, sendReply } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/tunnel frontend 3000"));
+
+      expect(sendReply).toHaveBeenCalledWith(
+        expect.stringContaining('No active session for "frontend"'),
+      );
+      expect(tunnelManager.start).not.toHaveBeenCalled();
+    });
+
+    it("shows error when no port found", async () => {
+      const tunnelManager = createMockTunnelManager();
+      const { deps, sendReply, sessionManager } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/tunnel frontend"));
+
+      expect(sendReply).toHaveBeenCalledWith(expect.stringContaining("No port found"));
+    });
+  });
+
+  describe("/tunnels", () => {
+    it("shows active tunnels grouped by mode", async () => {
+      const tunnelManager = createMockTunnelManager();
+      tunnelManager.list.mockReturnValue([
+        {
+          id: "t1",
+          project: "frontend",
+          localPort: 3000,
+          url: "https://mydevice.ts.net:3000",
+          mode: "serve",
+          status: "active",
+        },
+        {
+          id: "t2",
+          project: "api",
+          localPort: 8000,
+          url: "https://mydevice.ts.net:8443/api",
+          mode: "funnel",
+          status: "active",
+        },
+      ]);
+      const { deps, sendReply } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/tunnels"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("PRIVATE (tailnet only)");
+      expect(reply).toContain("frontend");
+      expect(reply).toContain("PUBLIC (internet)");
+      expect(reply).toContain("api");
+    });
+
+    it("shows empty message when no tunnels", async () => {
+      const tunnelManager = createMockTunnelManager();
+      const { deps, sendReply } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/tunnels"));
+
+      expect(sendReply).toHaveBeenCalledWith("No active tunnels.");
+    });
+  });
+
+  describe("/tunnel-stop", () => {
+    it("stops all tunnels for project when no port", async () => {
+      const tunnelManager = createMockTunnelManager();
+      const { deps, sendReply } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/tunnel-stop frontend"));
+
+      expect(tunnelManager.stopByProject).toHaveBeenCalledWith("frontend");
+      expect(sendReply).toHaveBeenCalledWith("[frontend] All tunnels stopped.");
+    });
+
+    it("stops specific tunnel when port specified", async () => {
+      const tunnelManager = createMockTunnelManager();
+      const { deps, sendReply } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/tunnel-stop frontend 3000"));
+
+      expect(tunnelManager.stopByProjectPort).toHaveBeenCalledWith("frontend", 3000);
+      expect(sendReply).toHaveBeenCalledWith("[frontend] Tunnel on port 3000 stopped.");
+    });
+  });
+
+  describe("/status with tunnels", () => {
+    it("includes tunnel count in status", async () => {
+      const tunnelManager = createMockTunnelManager();
+      tunnelManager.list.mockReturnValue([
+        { id: "t1", project: "frontend", mode: "serve", status: "active" },
+      ]);
+      const { deps, sendReply, sessionManager } = createTestDeps({
+        tunnelManager: tunnelManager as unknown as TunnelManager,
+      });
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/status"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("Tunnels: 1 active");
+    });
+  });
+
+  describe("/help with tunnels", () => {
+    it("includes tunnel commands in help text", async () => {
+      const { deps, sendReply } = createTestDeps();
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/help"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("/tunnel");
+      expect(reply).toContain("/tunnel-stop");
+      expect(reply).toContain("/tunnels");
+      expect(reply).toContain("--public");
     });
   });
 });

@@ -111,7 +111,8 @@
       "Bash(sysctl:*)",
       "Bash(pnpm tsgo:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(gh issue view:*)"
+      "Bash(gh issue view:*)",
+      "WebFetch(domain:tailscale.com)"
     ]
   },
   "enableAllProjectMcpServers": true,

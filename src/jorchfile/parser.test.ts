@@ -52,7 +52,7 @@ PROJECT backend
     expect(result.projects[1].name).toBe("backend");
   });
 
-  it("parses reserved fields (port, tunnel, approve, output)", () => {
+  it("parses reserved fields (port, tunnel legacy, approve, output)", () => {
     const content = `
 PROJECT app
   path = ${tempDir}
@@ -66,9 +66,95 @@ PROJECT app
     const p = result.projects[0];
 
     expect(p.port).toBe(3000);
-    expect(p.tunnel).toBe("serve");
+    expect(p.tunnels).toEqual([{ mode: "serve", port: 3000 }]);
     expect(p.approve).toBe("plan");
     expect(p.output).toBe("summary");
+  });
+
+  it("parses multi-entry tunnel field", () => {
+    const content = `
+PROJECT kiwi-auth
+  path = ${tempDir}
+  tunnel = serve:3000, serve:5173, serve:8080
+  start = make start-bg
+`;
+    const result = parseJorchfile(content);
+    const p = result.projects[0];
+
+    expect(p.tunnels).toHaveLength(3);
+    expect(p.tunnels).toEqual([
+      { mode: "serve", port: 3000 },
+      { mode: "serve", port: 5173 },
+      { mode: "serve", port: 8080 },
+    ]);
+  });
+
+  it("parses funnel entries with explicit paths", () => {
+    const content = `
+PROJECT kiwi-auth
+  path = ${tempDir}
+  tunnel = funnel:3000:/api, funnel:5173:/app, funnel:8080:/gateway
+  start = make start-bg
+`;
+    const result = parseJorchfile(content);
+    const p = result.projects[0];
+
+    expect(p.tunnels).toEqual([
+      { mode: "funnel", port: 3000, path: "/api" },
+      { mode: "funnel", port: 5173, path: "/app" },
+      { mode: "funnel", port: 8080, path: "/gateway" },
+    ]);
+  });
+
+  it("defaults funnel path to /<project>/<port> when not specified", () => {
+    const content = `
+PROJECT myapp
+  path = ${tempDir}
+  tunnel = funnel:3000, funnel:5173
+`;
+    const result = parseJorchfile(content);
+
+    expect(result.projects[0].tunnels).toEqual([
+      { mode: "funnel", port: 3000, path: "/myapp/3000" },
+      { mode: "funnel", port: 5173, path: "/myapp/5173" },
+    ]);
+  });
+
+  it("supports mixed serve and funnel entries", () => {
+    const content = `
+PROJECT stack
+  path = ${tempDir}
+  tunnel = serve:3000, funnel:8080:/api
+`;
+    const result = parseJorchfile(content);
+
+    expect(result.projects[0].tunnels).toEqual([
+      { mode: "serve", port: 3000 },
+      { mode: "funnel", port: 8080, path: "/api" },
+    ]);
+  });
+
+  it("legacy tunnel = funnel uses funnel_path if provided", () => {
+    const content = `
+PROJECT app
+  path = ${tempDir}
+  port = 3000
+  tunnel = funnel
+  funnel_path = /myapp
+`;
+    const result = parseJorchfile(content);
+
+    expect(result.projects[0].tunnels).toEqual([{ mode: "funnel", port: 3000, path: "/myapp" }]);
+  });
+
+  it("legacy tunnel without port throws", () => {
+    const content = `
+PROJECT app
+  path = ${tempDir}
+  tunnel = serve
+`;
+    expect(() => parseJorchfile(content)).toThrow(JorchfileParseError);
+    expect(() => parseJorchfile(content)).toThrow(/requires a port field/);
   });
 
   it("handles backslash continuation", () => {
@@ -224,7 +310,7 @@ PROJECT app
 `;
 
     expect(() => parseJorchfile(content)).toThrow(JorchfileParseError);
-    expect(() => parseJorchfile(content)).toThrow(/tunnel must be "serve" or "funnel"/);
+    expect(() => parseJorchfile(content)).toThrow(/invalid tunnel entry "invalid"/);
   });
 
   it("throws JorchfileParseError for non-existent @file", () => {

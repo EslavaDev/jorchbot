@@ -1,4 +1,4 @@
-import type { Command } from "commander";
+import { Command } from "commander";
 import { loadConfig } from "../../config/jorchbot-config-loader.js";
 
 export function registerJorchBotCommands(program: Command): void {
@@ -55,4 +55,47 @@ export function registerJorchBotCommands(program: Command): void {
       // version is set in package.json and read by Commander at program level
       console.log(`jorchbot v${program.parent?.version() ?? program.version() ?? "unknown"}`);
     });
+
+  // Tunnel management subcommand
+  const tunnel = jb.command("tunnel").description("Manage tunnels");
+
+  tunnel.addCommand(
+    new Command("start")
+      .argument("<project>", "Project name")
+      .option("-p, --port <port>", "Local port to expose")
+      .option("--public", "Use Funnel (public internet) instead of Serve (tailnet)")
+      .description("Start a tunnel")
+      .action(async (project: string, opts: { port?: string; public?: boolean }) => {
+        const port = opts.port ? Number.parseInt(opts.port, 10) : undefined;
+        const mode = opts.public ? "funnel" : "serve";
+        console.log(`Starting ${mode} tunnel for "${project}"${port ? ` on port ${port}` : ""}...`);
+        console.log("Note: Tunnel management requires a running gateway. Use 'jb start' first.");
+      }),
+  );
+
+  tunnel.addCommand(
+    new Command("stop")
+      .argument("<project>", "Project name")
+      .option("-p, --port <port>", "Specific port to stop")
+      .description("Stop tunnel(s)")
+      .action(async (project: string, opts: { port?: string }) => {
+        const port = opts.port ? Number.parseInt(opts.port, 10) : undefined;
+        console.log(`Stopping tunnel(s) for "${project}"${port ? ` on port ${port}` : ""}...`);
+        console.log("Note: Tunnel management requires a running gateway. Use 'jb start' first.");
+      }),
+  );
+
+  tunnel.addCommand(
+    new Command("list").description("List active tunnels").action(async () => {
+      console.log("Listing active tunnels...");
+      console.log("Note: Tunnel management requires a running gateway. Use 'jb start' first.");
+    }),
+  );
+
+  tunnel.addCommand(
+    new Command("status").description("Health status of all tunnels").action(async () => {
+      console.log("Checking tunnel health...");
+      console.log("Note: Tunnel management requires a running gateway. Use 'jb start' first.");
+    }),
+  );
 }

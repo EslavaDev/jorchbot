@@ -16,11 +16,17 @@ import { loadJorchfile } from "../jorchfile/loader.js";
 import { readMakefileTargets } from "../jorchfile/makefile-reader.js";
 import { PortManager } from "../jorchfile/port-manager.js";
 import { BackgroundTaskManager } from "../jorchfile/task-manager.js";
-import { TunnelManager } from "../jorchfile/tunnel.js";
 import { JorchfileWatcher } from "../jorchfile/watcher.js";
 import { chunkTextForOutbound } from "../plugin-sdk/text-chunking.js";
 import { SessionManager } from "../sessions/jorchbot/manager.js";
 import { ShellRunner } from "../sessions/jorchbot/shell-runner.js";
+import { TailscaleFunnelAdapter } from "../tunnels/adapters/tailscale-funnel.js";
+import { TailscaleServeAdapter } from "../tunnels/adapters/tailscale-serve.js";
+import { FunnelProxy } from "../tunnels/funnel-proxy.js";
+import { HealthMonitor } from "../tunnels/health.js";
+import { TunnelManager } from "../tunnels/manager.js";
+import { TunnelDb } from "../tunnels/tunnel-db.js";
+import type { TunnelEvent } from "../tunnels/types.js";
 import { createApprovalRouter } from "./approval-api.js";
 import { checkKapsoAccess } from "./kapso-access-control.js";
 
@@ -119,7 +125,7 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       sendListTo,
       onSessionDestroy: (project: string) => {
         taskManagerRef?.stopAll(project);
-        void tunnelManagerRef?.stopAll(project);
+        void tunnelManagerRef?.stopByProject(project);
       },
     });
 
@@ -142,9 +148,74 @@ export async function startGateway(opts: StartOptions): Promise<void> {
 
     const taskManager = new BackgroundTaskManager({ sendReply });
     const portManager = new PortManager();
-    const tunnelManager = new TunnelManager({ sendReply, sendButtons });
 
-    // Wire Phase 3 refs for onSessionDestroy callback
+    // --- Phase 4: Tunnel Manager ---
+    const serveAdapter = new TailscaleServeAdapter();
+    const funnelAdapter = new TailscaleFunnelAdapter();
+    const funnelProxy = new FunnelProxy(config.tunnels.funnelProxy.port);
+    const tunnelDb = new TunnelDb();
+
+    // Shared tunnel event handler (used by both TunnelManager callbacks and HealthMonitor)
+    const handleTunnelEvent = (event: TunnelEvent) => {
+      if (event.type === "tunnel:started") {
+        void sendReply(
+          `[${event.tunnel.project}] Tunnel active: ${event.tunnel.url} (${event.tunnel.mode}, port ${event.tunnel.localPort})`,
+        );
+      } else if (event.type === "tunnel:stopped") {
+        void sendReply(`[${event.project}] Tunnel stopped.`);
+      } else if (event.type === "tunnel:error") {
+        void sendReply(`[${event.project}] Tunnel error: ${event.error}`);
+      } else if (event.type === "tunnel:health_restored") {
+        void sendReply(`[${event.project}] Tunnel health restored.`);
+      } else if (event.type === "tunnel:restart_failed") {
+        void sendReply(
+          `[${event.project}] Tunnel restart failed after ${event.attempts} attempts. Marked as error.`,
+        );
+      }
+    };
+
+    const healthMonitor = new HealthMonitor(
+      {
+        intervalMs: config.tunnels.health.intervalMs,
+        failureThreshold: config.tunnels.health.failureThreshold,
+        maxRestartAttempts: config.tunnels.health.maxRestartAttempts,
+      },
+      {
+        isServeActive: (p) => serveAdapter.isActive(p),
+        isFunnelProxyRunning: () => funnelProxy.isRunning(),
+        updateDbStatus: (id, status) => tunnelDb.updateStatus(id, status),
+        onNotify: handleTunnelEvent,
+      },
+    );
+
+    const tunnelManager = new TunnelManager({
+      serveAdapter,
+      funnelAdapter,
+      funnelProxy,
+      funnelPublicPort: config.tunnels.funnelProxy.tailscalePort,
+      healthMonitor,
+      db: tunnelDb,
+      callbacks: {
+        onNotify: handleTunnelEvent,
+        onConfirmFunnel: (tunnelId, project, tunnelPort) => {
+          void sendButtons(
+            `[${project}] Funnel exposes port ${tunnelPort} to the public internet. Continue?`,
+            [
+              {
+                id: JSON.stringify({ type: "tunnel_approve", tunnelId }),
+                title: "Yes, expose",
+              },
+              {
+                id: JSON.stringify({ type: "tunnel_reject", tunnelId, project }),
+                title: "Cancel",
+              },
+            ],
+          );
+        },
+      },
+    });
+
+    // Wire Phase 3/4 refs for onSessionDestroy callback
     taskManagerRef = taskManager;
     tunnelManagerRef = tunnelManager;
 
@@ -187,7 +258,7 @@ export async function startGateway(opts: StartOptions): Promise<void> {
         // Clean up removed/modified projects
         for (const projectName of [...changes.removed, ...changes.modified]) {
           taskManager.stopAll(projectName);
-          await tunnelManager.stopAll(projectName);
+          await tunnelManager.stopByProject(projectName);
         }
 
         if (changes.added.length > 0 || changes.removed.length > 0 || changes.modified.length > 0) {
@@ -217,6 +288,7 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       sendButtons,
       getJorchfileExecutor: () => jorchfileExecutor,
       taskManager,
+      tunnelManager,
       readMakefileTargets,
     });
 
@@ -224,6 +296,12 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     const restored = await sessionManager.restore();
     if (restored > 0) {
       console.log(`[jorchbot] restored ${restored} active session(s)`);
+    }
+
+    // Restore tunnel state from DB (reconnect alive tunnels, mark dead ones)
+    const restoredTunnels = await tunnelManager.restore();
+    if (restoredTunnels > 0) {
+      console.log(`[jorchbot] restored ${restoredTunnels} active tunnel(s)`);
     }
 
     const webhookHandlers = createWebhookHandlers({
@@ -259,10 +337,18 @@ export async function startGateway(opts: StartOptions): Promise<void> {
           } else if (payload.type === "shell_approve" || payload.type === "shell_reject") {
             // TODO: Phase 2 shell approval
           } else if (payload.type === "tunnel_approve") {
-            const { project, port: tunnelPort } = payload as { project: string; port: number };
-            await tunnelManager.startServe({ project, port: tunnelPort, mode: "funnel" });
+            const { tunnelId } = payload as { tunnelId: string };
+            try {
+              await tunnelManager.confirmFunnel(tunnelId);
+            } catch (err: unknown) {
+              await sendReplyTo(
+                senderPhone,
+                `Funnel failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
           } else if (payload.type === "tunnel_reject") {
-            const { project } = payload as { project: string };
+            const { tunnelId, project } = payload as { tunnelId: string; project: string };
+            tunnelManager.cancelFunnel(tunnelId);
             await sendReplyTo(senderPhone, `[${project}] Tunnel cancelled.`);
           } else if (payload.type === "task_restart") {
             const { project, command } = payload as { project: string; command: string };
@@ -338,18 +424,12 @@ export async function startGateway(opts: StartOptions): Promise<void> {
 
     const shutdown = async () => {
       console.log("[jorchbot] shutting down...");
-      // Phase 3: Stop watcher, background tasks, and tunnels
+      // Stop watcher, background tasks, and tunnels
       watcher.stop();
       for (const task of taskManager.listAll()) {
         taskManager.stopAll(task.project);
       }
-      try {
-        for (const tunnel of tunnelManager.listAll()) {
-          await tunnelManager.stop(tunnel.project, tunnel.port);
-        }
-      } catch {
-        // best-effort tunnel cleanup
-      }
+      await tunnelManager.stopAll();
       // Stop all active sessions gracefully
       for (const session of sessionManager.listActive()) {
         const active = sessionManager.getByProject(session.project);

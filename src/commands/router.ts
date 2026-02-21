@@ -4,6 +4,8 @@ import type { BackgroundTaskManager } from "../jorchfile/task-manager.js";
 import { formatUptime } from "../jorchfile/task-manager.js";
 import type { SessionManager, ActiveSession } from "../sessions/jorchbot/manager.js";
 import type { ShellRunner } from "../sessions/jorchbot/shell-runner.js";
+import { TunnelPendingConfirmation } from "../tunnels/manager.js";
+import type { TunnelManager } from "../tunnels/manager.js";
 
 export interface IncomingMessage {
   text: string;
@@ -27,6 +29,7 @@ export interface CommandRouterDeps {
   /** Getter function for hot-reload: returns null if no Jorchfile loaded */
   getJorchfileExecutor?: () => JorchfileExecutor | null;
   taskManager?: BackgroundTaskManager;
+  tunnelManager?: TunnelManager;
   readMakefileTargets?: typeof ReadMakefileTargetsFn;
 }
 
@@ -147,6 +150,17 @@ export class CommandRouter {
         return;
       case "compact":
         await this.handleCompact(args);
+        return;
+
+      // Phase 4: Tunnel commands
+      case "tunnel":
+        await this.handleTunnel(args);
+        return;
+      case "tunnel-stop":
+        await this.handleTunnelStop(args);
+        return;
+      case "tunnels":
+        await this.handleTunnels();
         return;
 
       // Phase 3: Jorchfile commands
@@ -724,6 +738,123 @@ export class CommandRouter {
     await this.executeShell(`make ${target}`, focused);
   }
 
+  private async handleTunnel(args: string[]): Promise<void> {
+    const [project, ...rest] = args;
+    if (!project) {
+      await this.deps.sendReply("Usage: /tunnel <project> [port] [--public]");
+      return;
+    }
+
+    if (!this.deps.tunnelManager) {
+      await this.deps.sendReply("Tunnel manager not available.");
+      return;
+    }
+
+    const isPublic = rest.includes("--public");
+    const portArg = rest.find((a) => !a.startsWith("--"));
+    const port = portArg ? Number.parseInt(portArg, 10) : undefined;
+
+    // Resolve session
+    const session = this.deps.sessionManager.getByProject(project);
+    if (!session) {
+      await this.deps.sendReply(`No active session for "${project}". Use /new ${project} first.`);
+      return;
+    }
+
+    // Port: explicit arg > running task port > error
+    const resolvedPort = port ?? this.resolveProjectPort(project);
+    if (!resolvedPort) {
+      await this.deps.sendReply(
+        `No port found for "${project}". Specify a port: /tunnel ${project} 3000`,
+      );
+      return;
+    }
+
+    const mode = isPublic ? "funnel" : "serve";
+
+    try {
+      await this.deps.tunnelManager.start({
+        project,
+        sessionId: session.id,
+        localPort: resolvedPort,
+        mode,
+      });
+      // For serve mode, tunnel:started notification is sent by TunnelManager callbacks.
+      // For funnel mode, TunnelPendingConfirmation is thrown and caught below.
+    } catch (err: unknown) {
+      if (err instanceof TunnelPendingConfirmation) {
+        // Confirmation buttons are sent by the TunnelManager callback.
+        return;
+      }
+      await this.deps.sendReply(
+        `Failed to start tunnel: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private async handleTunnelStop(args: string[]): Promise<void> {
+    const [project, portArg] = args;
+    if (!project) {
+      await this.deps.sendReply("Usage: /tunnel-stop <project> [port]");
+      return;
+    }
+
+    if (!this.deps.tunnelManager) {
+      await this.deps.sendReply("Tunnel manager not available.");
+      return;
+    }
+
+    if (portArg) {
+      const port = Number.parseInt(portArg, 10);
+      await this.deps.tunnelManager.stopByProjectPort(project, port);
+      await this.deps.sendReply(`[${project}] Tunnel on port ${port} stopped.`);
+    } else {
+      await this.deps.tunnelManager.stopByProject(project);
+      await this.deps.sendReply(`[${project}] All tunnels stopped.`);
+    }
+  }
+
+  private async handleTunnels(): Promise<void> {
+    if (!this.deps.tunnelManager) {
+      await this.deps.sendReply("Tunnel manager not available.");
+      return;
+    }
+
+    const allTunnels = this.deps.tunnelManager.list();
+    if (allTunnels.length === 0) {
+      await this.deps.sendReply("No active tunnels.");
+      return;
+    }
+
+    const serveTunnels = allTunnels.filter((t) => t.mode === "serve");
+    const funnelTunnels = allTunnels.filter((t) => t.mode === "funnel");
+
+    const lines: string[] = ["*Active tunnels:*", ""];
+
+    if (serveTunnels.length > 0) {
+      lines.push("*PRIVATE (tailnet only):*");
+      for (const t of serveTunnels) {
+        lines.push(`  ${t.project} → ${t.url} (Serve, port ${t.localPort})`);
+      }
+      lines.push("");
+    }
+
+    if (funnelTunnels.length > 0) {
+      lines.push("*PUBLIC (internet):*");
+      for (const t of funnelTunnels) {
+        lines.push(`  ${t.project} → ${t.url} (Funnel, port ${t.localPort})`);
+      }
+    }
+
+    await this.deps.sendReply(lines.join("\n"));
+  }
+
+  private resolveProjectPort(project: string): number | undefined {
+    const tasks = this.deps.taskManager?.listByProject(project) ?? [];
+    const task = tasks.find((t) => t.port !== undefined);
+    return task?.port;
+  }
+
   private async handleHelp(): Promise<void> {
     const help = [
       "*JorchBot Commands:*",
@@ -742,6 +873,12 @@ export class CommandRouter {
       "/stop-cmd <project> [cmd] — Stop background task(s)",
       "/make [target] — List or run Makefile targets",
       "/<command> [project] — Run Jorchfile command",
+      "",
+      "*Tunnels:*",
+      "/tunnel <project> [port] — Start private tunnel (Serve)",
+      "/tunnel <project> [port] --public — Start public tunnel (Funnel)",
+      "/tunnel-stop <project> [port] — Stop tunnel(s)",
+      "/tunnels — List all active tunnels",
       "",
       "*Shell:*",
       "$ <command> — Execute shell command",
@@ -782,6 +919,11 @@ export class CommandRouter {
       if (focused) {
         lines.push(`Focused: ${focused.project} (${focused.runner.getContextPercent()}%)`);
       }
+    }
+
+    const tunnelCount = this.deps.tunnelManager?.list().length ?? 0;
+    if (tunnelCount > 0) {
+      lines.push(`Tunnels: ${tunnelCount} active`);
     }
 
     await this.deps.sendReply(lines.join("\n"));

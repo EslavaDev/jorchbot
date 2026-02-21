@@ -15,6 +15,13 @@
       "when": 1771600812229,
       "tag": "0001_needy_zaladane",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1771612311248,
+      "tag": "0002_wise_darkstar",
+      "breakpoints": true
     }
   ]
 }

@@ -46,6 +46,7 @@ export const tunnels = sqliteTable("tunnels", {
   sessionId: text("session_id")
     .references(() => sessions.id, { onDelete: "cascade" })
     .notNull(),
+  project: text("project").notNull(),
   localPort: integer("local_port").notNull(),
   assignedPort: integer("assigned_port"),
   url: text("url"),
@@ -58,6 +59,7 @@ export const tunnels = sqliteTable("tunnels", {
   status: text("status", { enum: ["active", "stopped", "error"] })
     .notNull()
     .default("active"),
+  funnelPath: text("funnel_path"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 

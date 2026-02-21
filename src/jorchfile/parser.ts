@@ -7,6 +7,15 @@ import { JorchfileParseError, JorchfileValidationError } from "../errors/index.j
 /** Default commands that run in background */
 const DEFAULT_BACKGROUND_COMMANDS = ["dev", "build"];
 
+export const TunnelEntrySchema = z.object({
+  mode: z.enum(["serve", "funnel"]),
+  port: z.number().int().min(1).max(65535),
+  /** Funnel proxy path (e.g., "/api"). Only meaningful for funnel mode. */
+  path: z.string().optional(),
+});
+
+export type TunnelEntry = z.infer<typeof TunnelEntrySchema>;
+
 export const JorchProjectSchema = z.object({
   name: z
     .string()
@@ -17,8 +26,8 @@ export const JorchProjectSchema = z.object({
     }),
   path: z.string().min(1),
   port: z.number().int().min(1).max(65535).optional(),
-  tunnel: z.enum(["serve", "funnel"]).optional(),
-  funnelPath: z.string().optional(),
+  /** Tunnel entries parsed from "tunnel" INI field. Empty array = no tunnels. */
+  tunnels: z.array(TunnelEntrySchema).default([]),
   approve: z.enum(["confirm", "plan", "auto"]).optional(),
   output: z.enum(["verbose", "summary", "silent"]).optional(),
   instructions: z.string().optional(),
@@ -228,11 +237,25 @@ function flushRawField(
  * Two-pass: (1) extract `path` first, (2) resolve @file for all other fields using that path.
  * `path` itself does NOT support @file — always literal (with ~ expansion).
  */
+interface RawProjectFields {
+  name: string;
+  path?: string;
+  port?: number;
+  tunnelRaw?: string;
+  tunnelLineNum?: number;
+  funnelPath?: string;
+  approve?: "confirm" | "plan" | "auto";
+  output?: "verbose" | "summary" | "silent";
+  instructions?: string;
+  background?: string[];
+  commands: Record<string, string>;
+}
+
 function processProjectFields(
   name: string,
   fields: Map<string, { value: string; lineNum: number }>,
-): Partial<JorchProject> & { commands: Record<string, string> } {
-  const project: Partial<JorchProject> & { commands: Record<string, string> } = {
+): RawProjectFields {
+  const project: RawProjectFields = {
     name,
     commands: {},
   };
@@ -259,12 +282,8 @@ function processProjectFields(
         project.port = parseIntStrict(resolved, `port (line ${lineNum})`);
         break;
       case "tunnel":
-        if (resolved !== "serve" && resolved !== "funnel") {
-          throw new JorchfileParseError(
-            `Line ${lineNum}: tunnel must be "serve" or "funnel", got "${resolved}"`,
-          );
-        }
-        project.tunnel = resolved;
+        project.tunnelRaw = resolved;
+        project.tunnelLineNum = lineNum;
         break;
       case "funnel_path":
         project.funnelPath = resolved;
@@ -341,18 +360,85 @@ function finalizeProject(
     );
   }
 
+  // Parse tunnel entries (deferred so that `port` is available for legacy format)
+  let tunnels: TunnelEntry[] = [];
+  if (partial.tunnelRaw !== undefined && partial.tunnelLineNum !== undefined) {
+    tunnels = parseTunnelEntries(
+      partial.tunnelRaw,
+      partial.tunnelLineNum,
+      name,
+      partial.port,
+      partial.funnelPath,
+    );
+  }
+
   return {
     name,
     path: partial.path,
     port: partial.port,
-    tunnel: partial.tunnel,
-    funnelPath: partial.funnelPath,
+    tunnels,
     approve: partial.approve,
     output: partial.output,
     instructions: partial.instructions,
     background: partial.background ?? DEFAULT_BACKGROUND_COMMANDS,
     commands: partial.commands,
   };
+}
+
+/**
+ * Parse the `tunnel` field value into TunnelEntry[].
+ *
+ * Supports two formats:
+ * - Legacy: "serve" or "funnel" (requires `port` field)
+ * - Multi-entry: "serve:3000, funnel:5173:/app, serve:8080"
+ *
+ * For funnel entries without an explicit path, defaults to `/<project>/<port>`.
+ */
+function parseTunnelEntries(
+  raw: string,
+  lineNum: number,
+  projectName: string,
+  projectPort: number | undefined,
+  legacyFunnelPath: string | undefined,
+): TunnelEntry[] {
+  // Legacy format: just "serve" or "funnel"
+  if (raw === "serve" || raw === "funnel") {
+    if (projectPort === undefined) {
+      throw new JorchfileParseError(
+        `Line ${lineNum}: tunnel = "${raw}" requires a port field. Use tunnel = ${raw}:<port> instead.`,
+      );
+    }
+    const tunnelPath =
+      raw === "funnel" ? (legacyFunnelPath ?? `/${projectName}/${projectPort}`) : undefined;
+    return [{ mode: raw, port: projectPort, path: tunnelPath }];
+  }
+
+  // Multi-entry format: "serve:3000, funnel:5173:/app, serve:8080"
+  const entries = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  return entries.map((entry) => {
+    const match = entry.match(/^(serve|funnel):(\d+)(?::(.+))?$/);
+    if (!match) {
+      throw new JorchfileParseError(
+        `Line ${lineNum}: invalid tunnel entry "${entry}". Expected format: serve|funnel:<port>[:/path]`,
+      );
+    }
+
+    const mode = match[1] as "serve" | "funnel";
+    const port = Number.parseInt(match[2], 10);
+    if (port < 1 || port > 65535) {
+      throw new JorchfileParseError(`Line ${lineNum}: tunnel port ${port} out of range (1-65535)`);
+    }
+
+    const explicitPath = match[3];
+    // Default path for funnel: /<project>/<port>. Serve doesn't need paths (direct port access).
+    const tunnelPath =
+      mode === "funnel" ? (explicitPath ?? `/${projectName}/${port}`) : explicitPath;
+    return { mode, port, path: tunnelPath };
+  });
 }
 
 function expandTilde(p: string): string {
