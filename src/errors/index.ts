@@ -186,3 +186,42 @@ export class FunnelProxyRouteConflictError extends JorchBotError {
     super(`Funnel proxy route conflict: path "${path}" is already registered`);
   }
 }
+
+// --- Mode errors (Phase 5) ---
+
+/** Thrown when an invalid mode value is provided to /mode command. */
+export class InvalidModeError extends JorchBotError {
+  constructor(mode: string) {
+    super(
+      `Invalid mode "${mode}". Valid approval modes: confirm, plan, auto. ` +
+        `Valid output modes: verbose, summary, silent.`,
+    );
+  }
+}
+
+/** Thrown when trying to set mode on a session that's not active. */
+export class SessionModeUpdateError extends JorchBotError {
+  constructor(project: string, cause?: unknown) {
+    super(`Failed to update mode for session "${project}"`, {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+// --- Document errors (Phase 5) ---
+
+/** Thrown when document storage fails. */
+export class DocumentStoreError extends JorchBotError {
+  constructor(filename: string, cause?: unknown) {
+    super(`Failed to store document "${filename}"`, {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** Thrown when document retrieval fails (expired or not found). */
+export class DocumentNotFoundError extends JorchBotError {
+  constructor(documentId: string) {
+    super(`Document "${documentId}" not found or expired`);
+  }
+}

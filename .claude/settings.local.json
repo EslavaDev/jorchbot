@@ -112,7 +112,8 @@
       "Bash(pnpm tsgo:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(gh issue view:*)",
-      "WebFetch(domain:tailscale.com)"
+      "WebFetch(domain:tailscale.com)",
+      "WebFetch(domain:www.sambaiz.net)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -138,7 +138,7 @@ export interface KapsoEventBatchPayload {
 export interface ApprovalButtonPayload {
   sessionId: string;
   approvalId: string;
-  action: "approve" | "reject";
+  action: "approve" | "reject" | "feedback";
 }
 
 export interface QuestionAnswerPayload {

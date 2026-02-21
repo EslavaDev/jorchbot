@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { resolveApprovalByMode } from "../sessions/jorchbot/approval-modes.js";
 import type { SessionManager } from "../sessions/jorchbot/manager.js";
 
 export interface ApprovalApiDeps {
@@ -30,13 +31,31 @@ export function createApprovalRouter(deps: ApprovalApiDeps): Router {
     }
 
     // Find the session's approval manager
-    const sessions = deps.sessionManager.listActiveWithDetails();
-    const session = sessions.find((s) => s.id === sessionId);
+    const activeSessions = deps.sessionManager.listActiveWithDetails();
+    const session = activeSessions.find((s) => s.id === sessionId);
     if (!session) {
       res.status(404).json({ error: `Session ${sessionId} not found` });
       return;
     }
 
+    // Check mode-based auto-resolution before creating a pending approval
+    try {
+      const record = deps.sessionManager.getSessionRecordById(sessionId);
+      const modeResult = resolveApprovalByMode(record.mode, toolName);
+      if (modeResult !== null) {
+        res.json({
+          id: `auto_${Date.now()}`,
+          autoResolved: true,
+          status: modeResult.decision === "allow" ? "approved" : "denied",
+          reason: modeResult.reason,
+        });
+        return;
+      }
+    } catch {
+      // Session record not found in DB — fall through to normal approval flow
+    }
+
+    // Confirm mode: create pending approval with buttons (existing flow)
     session.approval
       .requestApproval({
         toolUseId: `tool_${Date.now()}`,
@@ -57,11 +76,14 @@ export function createApprovalRouter(deps: ApprovalApiDeps): Router {
     const approvalId = req.params.id;
 
     // Search all sessions for this approval
-    const sessions = deps.sessionManager.listActiveWithDetails();
-    for (const session of sessions) {
-      const status = session.approval.getApprovalStatus(approvalId);
-      if (status !== null) {
-        res.json({ status });
+    const activeSessions = deps.sessionManager.listActiveWithDetails();
+    for (const session of activeSessions) {
+      const result = session.approval.getApprovalStatus(approvalId);
+      if (result !== null) {
+        res.json({
+          status: result.status,
+          additionalContext: result.additionalContext,
+        });
         return;
       }
     }

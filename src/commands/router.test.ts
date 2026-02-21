@@ -54,6 +54,15 @@ function createTestDeps(overrides?: Partial<CommandRouterDeps>) {
   const sendButtons = vi
     .fn<(text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>>()
     .mockResolvedValue(undefined);
+  const sendList = vi
+    .fn<
+      (
+        text: string,
+        buttonText: string,
+        options: Array<{ id: string; title: string; description?: string }>,
+      ) => Promise<void>
+    >()
+    .mockResolvedValue(undefined);
   const sendReplyTo = vi
     .fn<(phone: string, text: string) => Promise<void>>()
     .mockResolvedValue(undefined);
@@ -74,6 +83,7 @@ function createTestDeps(overrides?: Partial<CommandRouterDeps>) {
   return {
     sendReply,
     sendButtons,
+    sendList,
     sendReplyTo,
     sendButtonsTo,
     sessionManager,
@@ -83,6 +93,7 @@ function createTestDeps(overrides?: Partial<CommandRouterDeps>) {
       shellRunner,
       sendReply,
       sendButtons,
+      sendList,
       ...overrides,
     } satisfies CommandRouterDeps,
   };
@@ -126,13 +137,15 @@ describe("CommandRouter (Phase 2)", () => {
     });
 
     it("routes / prefix to command handlers", async () => {
-      const { deps, sendReply } = createTestDeps();
+      const { deps, sendList } = createTestDeps();
       const router = new CommandRouter(deps);
 
       await router.route(msg("/help"));
 
-      expect(sendReply).toHaveBeenCalledTimes(1);
-      expect(sendReply.mock.calls[0][0]).toContain("/new");
+      expect(sendList).toHaveBeenCalledTimes(1);
+      const [text, , options] = sendList.mock.calls[0];
+      expect(text).toContain("JorchBot Commands");
+      expect(options).toHaveLength(4);
     });
 
     it("routes free text to focused session", async () => {
@@ -1288,18 +1301,308 @@ describe("CommandRouter (Phase 4 — Tunnels)", () => {
     });
   });
 
-  describe("/help with tunnels", () => {
-    it("includes tunnel commands in help text", async () => {
-      const { deps, sendReply } = createTestDeps();
+  describe("/help", () => {
+    it("sends interactive list when sendList available", async () => {
+      const { deps, sendList } = createTestDeps();
       const router = new CommandRouter(deps);
 
       await router.route(msg("/help"));
 
+      expect(sendList).toHaveBeenCalledTimes(1);
+      const [text, buttonText, options] = sendList.mock.calls[0];
+      expect(text).toContain("JorchBot Commands");
+      expect(buttonText).toBe("Commands");
+      expect(options).toHaveLength(4);
+      expect(options[0].title).toBe("Global");
+      expect(options[1].title).toBe("Jorchfile");
+      expect(options[2].title).toBe("Shell");
+      expect(options[3].title).toBe("Claude");
+    });
+
+    it("/help --full sends full text", async () => {
+      const { deps, sendReply, sendList } = createTestDeps();
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/help --full"));
+
+      expect(sendList).not.toHaveBeenCalled();
+      expect(sendReply).toHaveBeenCalledTimes(1);
       const reply = sendReply.mock.calls[0][0];
       expect(reply).toContain("/tunnel");
       expect(reply).toContain("/tunnel-stop");
       expect(reply).toContain("/tunnels");
       expect(reply).toContain("--public");
+      expect(reply).toContain("/mode");
+      expect(reply).toContain("/output");
+    });
+
+    it("falls back to full text when sendList not available", async () => {
+      const { deps, sendReply } = createTestDeps({ sendList: undefined });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/help"));
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      expect(sendReply.mock.calls[0][0]).toContain("/new");
+    });
+
+    it("sendHelpCategory returns global commands", async () => {
+      const { deps, sendReply } = createTestDeps();
+      const router = new CommandRouter(deps);
+
+      await router.sendHelpCategory("global");
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("Global Commands");
+      expect(reply).toContain("/new");
+      expect(reply).toContain("/tunnel");
+      expect(reply).toContain("/mode");
+      expect(reply).toContain("/output");
+    });
+
+    it("sendHelpCategory returns shell commands", async () => {
+      const { deps, sendReply } = createTestDeps();
+      const router = new CommandRouter(deps);
+
+      await router.sendHelpCategory("shell");
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      expect(sendReply.mock.calls[0][0]).toContain("Shell Commands");
+    });
+
+    it("sendHelpCategory returns error for unknown category", async () => {
+      const { deps, sendReply } = createTestDeps();
+      const router = new CommandRouter(deps);
+
+      await router.sendHelpCategory("unknown");
+
+      expect(sendReply).toHaveBeenCalledTimes(1);
+      expect(sendReply.mock.calls[0][0]).toContain("Unknown help category");
+    });
+  });
+
+  describe("/new with Jorchfile approve/output defaults (Phase 5)", () => {
+    it("creates session with Jorchfile approve and output defaults", async () => {
+      const jorchfile: Jorchfile = {
+        projects: [
+          {
+            name: "auto-silent",
+            path: "/tmp/auto-silent",
+            commands: {},
+            background: [],
+            tunnels: [],
+            approve: "auto",
+            output: "silent",
+          },
+        ],
+        settings: {},
+      };
+      const executor = createMockExecutor(jorchfile);
+      const { deps, sendReply, sessionManager } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/new auto-silent"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("auto+silent");
+
+      const record = sessionManager.getSessionRecordByProject("auto-silent");
+      expect(record.mode).toBe("auto");
+      expect(record.outputMode).toBe("silent");
+    });
+
+    it("defaults to confirm+verbose when Jorchfile has no approve/output", async () => {
+      const jorchfile = createTestJorchfile();
+      const executor = createMockExecutor(jorchfile);
+      const { deps, sessionManager } = createTestDeps({
+        getJorchfileExecutor: () => executor as unknown as JorchfileExecutor,
+      });
+      const router = new CommandRouter(deps);
+
+      await router.route(msg("/new frontend"));
+
+      const record = sessionManager.getSessionRecordByProject("frontend");
+      expect(record.mode).toBe("confirm");
+      expect(record.outputMode).toBe("verbose");
+    });
+  });
+
+  describe("/mode (Phase 5 — approval only)", () => {
+    it("shows current approval mode with no args", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/mode"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("[frontend]");
+      expect(reply).toContain("Approval mode: *confirm*");
+    });
+
+    it("changes approval mode to auto", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/mode auto"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("auto");
+
+      const record = sessionManager.getSessionRecordByProject("frontend");
+      expect(record.mode).toBe("auto");
+    });
+
+    it("changes approval mode to plan", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/mode plan"));
+
+      const record = sessionManager.getSessionRecordByProject("frontend");
+      expect(record.mode).toBe("plan");
+    });
+
+    it("rejects output modes via /mode (use /output instead)", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/mode silent"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain('Unknown mode "silent"');
+      expect(reply).toContain("Valid: confirm, plan, auto");
+    });
+
+    it("shows error for invalid mode", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/mode invalid"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain('Unknown mode "invalid"');
+    });
+
+    it("targets specific project with /mode auto backend", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      await sessionManager.create({ project: "backend", path: "/tmp/backend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/mode auto backend"));
+
+      const record = sessionManager.getSessionRecordByProject("backend");
+      expect(record.mode).toBe("auto");
+
+      const frontendRecord = sessionManager.getSessionRecordByProject("frontend");
+      expect(frontendRecord.mode).toBe("confirm");
+    });
+
+    it("shows error when no focused session", async () => {
+      const { deps, sendReply } = createTestDeps();
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/mode"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("No focused session");
+    });
+  });
+
+  describe("/output (Phase 5 — output modes)", () => {
+    it("shows current output mode with no args", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/output"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("[frontend]");
+      expect(reply).toContain("Output mode: *verbose*");
+    });
+
+    it("changes output mode to silent", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/output silent"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("silent");
+
+      const record = sessionManager.getSessionRecordByProject("frontend");
+      expect(record.outputMode).toBe("silent");
+    });
+
+    it("changes output mode to summary", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/output summary"));
+
+      const record = sessionManager.getSessionRecordByProject("frontend");
+      expect(record.outputMode).toBe("summary");
+    });
+
+    it("rejects approval modes via /output (use /mode instead)", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/output auto"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain('Unknown output mode "auto"');
+      expect(reply).toContain("Valid: verbose, summary, silent");
+    });
+
+    it("targets specific project with /output silent backend", async () => {
+      const { deps, sendReply, sessionManager } = createTestDeps();
+      await sessionManager.create({ project: "frontend", path: "/tmp/frontend" }, SENDER);
+      await sessionManager.create({ project: "backend", path: "/tmp/backend" }, SENDER);
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/output silent backend"));
+
+      const record = sessionManager.getSessionRecordByProject("backend");
+      expect(record.outputMode).toBe("silent");
+
+      const frontendRecord = sessionManager.getSessionRecordByProject("frontend");
+      expect(frontendRecord.outputMode).toBe("verbose");
+    });
+
+    it("shows error when no focused session", async () => {
+      const { deps, sendReply } = createTestDeps();
+      const router = new CommandRouter(deps);
+
+      sendReply.mockClear();
+      await router.route(msg("/output"));
+
+      const reply = sendReply.mock.calls[0][0];
+      expect(reply).toContain("No focused session");
     });
   });
 });

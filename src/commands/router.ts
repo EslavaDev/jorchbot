@@ -4,6 +4,7 @@ import type { BackgroundTaskManager } from "../jorchfile/task-manager.js";
 import { formatUptime } from "../jorchfile/task-manager.js";
 import type { SessionManager, ActiveSession } from "../sessions/jorchbot/manager.js";
 import type { ShellRunner } from "../sessions/jorchbot/shell-runner.js";
+import type { ApprovalMode, OutputMode } from "../sessions/jorchbot/types.js";
 import { TunnelPendingConfirmation } from "../tunnels/manager.js";
 import type { TunnelManager } from "../tunnels/manager.js";
 
@@ -26,6 +27,11 @@ export interface CommandRouterDeps {
   shellRunner: ShellRunner;
   sendReply: (text: string) => Promise<void>;
   sendButtons: (text: string, buttons: Array<{ id: string; title: string }>) => Promise<void>;
+  sendList?: (
+    text: string,
+    buttonText: string,
+    options: Array<{ id: string; title: string; description?: string }>,
+  ) => Promise<void>;
   /** Getter function for hot-reload: returns null if no Jorchfile loaded */
   getJorchfileExecutor?: () => JorchfileExecutor | null;
   taskManager?: BackgroundTaskManager;
@@ -177,9 +183,17 @@ export class CommandRouter {
         await this.handleMake(args);
         return;
 
+      // Phase 5: Mode commands
+      case "mode":
+        await this.handleMode(args);
+        return;
+      case "output":
+        await this.handleOutput(args);
+        return;
+
       // General
       case "help":
-        await this.handleHelp();
+        await this.handleHelp(args);
         return;
       case "status":
         await this.handleStatus();
@@ -262,7 +276,13 @@ export class CommandRouter {
 
     try {
       const session = await this.deps.sessionManager.create(
-        { project, path: projectPath, systemPrompt },
+        {
+          project,
+          path: projectPath,
+          systemPrompt,
+          initialMode: jorchProject?.approve,
+          initialOutputMode: jorchProject?.output,
+        },
         this.currentSenderId,
       );
 
@@ -855,8 +875,117 @@ export class CommandRouter {
     return task?.port;
   }
 
-  private async handleHelp(): Promise<void> {
-    const help = [
+  private async handleHelp(args: string[]): Promise<void> {
+    // /help --full → full text (legacy behavior)
+    if (args.includes("--full")) {
+      await this.deps.sendReply(this.buildFullHelp());
+      return;
+    }
+
+    // Interactive list if sendList is available
+    if (this.deps.sendList) {
+      await this.deps.sendList("*JorchBot Commands* — Pick a category:", "Commands", [
+        {
+          id: JSON.stringify({ type: "help_category", category: "global" }),
+          title: "Global",
+          description: "Sessions, tunnels, modes, status",
+        },
+        {
+          id: JSON.stringify({ type: "help_category", category: "jorchfile" }),
+          title: "Jorchfile",
+          description: "Projects, tasks, commands",
+        },
+        {
+          id: JSON.stringify({ type: "help_category", category: "shell" }),
+          title: "Shell",
+          description: "Shell shortcuts and commands",
+        },
+        {
+          id: JSON.stringify({ type: "help_category", category: "claude" }),
+          title: "Claude",
+          description: "Claude Code session commands",
+        },
+      ]);
+      return;
+    }
+
+    // Fallback: full text if sendList not available
+    await this.deps.sendReply(this.buildFullHelp());
+  }
+
+  /** Send help text for a specific category. Called from onButtonReply for list_reply. */
+  async sendHelpCategory(category: string): Promise<void> {
+    const text = this.getHelpCategoryText(category);
+    if (text) {
+      await this.deps.sendReply(text);
+    } else {
+      await this.deps.sendReply(`Unknown help category: "${category}". Use /help to see options.`);
+    }
+  }
+
+  private getHelpCategoryText(category: string): string | null {
+    switch (category) {
+      case "global":
+        return [
+          "*Global Commands:*",
+          "",
+          "/new <project> [path] — Create session (from Jorchfile or path)",
+          "/switch <project> — Switch focused session",
+          "/list — List all sessions",
+          "/stop <project> — Stop a session",
+          "/logs <project> [n] — Last n messages (default: 20)",
+          "/compact <project> — Compact context window",
+          "/mode [value] [project] — Approval mode (confirm/plan/auto)",
+          "/output [value] [project] — Output mode (verbose/summary/silent)",
+          "/tunnel <project> [port] — Start private tunnel (Serve)",
+          "/tunnel <project> [port] --public — Start public tunnel (Funnel)",
+          "/tunnel-stop <project> [port] — Stop tunnel(s)",
+          "/tunnels — List all active tunnels",
+          "/help — Command list",
+          "/help --full — Full command reference",
+          "/status — Gateway status",
+        ].join("\n");
+      case "jorchfile":
+        return [
+          "*Jorchfile Commands:*",
+          "",
+          "/projects — List all Jorchfile projects",
+          "/tasks — List background tasks",
+          "/stop-cmd <project> [cmd] — Stop background task(s)",
+          "/make [target] — List or run Makefile targets",
+          "/<command> [project] — Run Jorchfile command",
+        ].join("\n");
+      case "shell":
+        return [
+          "*Shell Commands:*",
+          "",
+          "$ <command> — Execute shell command",
+          "/ls [path] — List files",
+          "/cat <file> — Read file",
+          "/grep <pattern> [path] — Search in files",
+          "/pwd — Current directory",
+          "/git <args> — Git commands",
+          "/tree [depth] — Directory tree",
+        ].join("\n");
+      case "claude":
+        return [
+          "*Claude Code Commands:*",
+          "",
+          "!usage — Session token counts and context %",
+          "!context — Context window usage",
+          "!compact — Compact focused session",
+          "!clear — Reset focused session",
+          "!<command> — Send as prompt to Claude Code",
+          "",
+          "Free text → sent to focused Claude Code session",
+        ].join("\n");
+      default:
+        return null;
+    }
+  }
+
+  private buildFullHelp(): string {
+    return [
       "*JorchBot Commands:*",
       "",
       "*Sessions:*",
@@ -866,6 +995,8 @@ export class CommandRouter {
       "/stop <project> — Stop a session",
       "/logs <project> [n] — Last n messages (default: 20)",
       "/compact <project> — Compact context window",
+      "/mode [value] [project] — Approval mode (confirm/plan/auto)",
+      "/output [value] [project] — Output mode (verbose/summary/silent)",
       "",
       "*Jorchfile:*",
       "/projects — List all Jorchfile projects",
@@ -897,13 +1028,12 @@ export class CommandRouter {
       "!<command> — Send as prompt to Claude Code",
       "",
       "*Other:*",
-      "/help — This help",
+      "/help — Command list",
+      "/help --full — Full command reference",
       "/status — Gateway status",
       "",
       "Free text → sent to focused Claude Code session",
     ].join("\n");
-
-    await this.deps.sendReply(help);
   }
 
   private async handleStatus(): Promise<void> {
@@ -927,6 +1057,98 @@ export class CommandRouter {
     }
 
     await this.deps.sendReply(lines.join("\n"));
+  }
+
+  private async handleMode(args: string[]): Promise<void> {
+    const APPROVAL_MODES = new Set<string>(["confirm", "plan", "auto"]);
+
+    // /mode (no args) → show current approval mode
+    if (args.length === 0) {
+      const project = this.deps.sessionManager.getFocusedProject(this.currentSenderId);
+      if (!project) {
+        await this.deps.sendReply("No focused session. Use /new to create one.");
+        return;
+      }
+      try {
+        const record = this.deps.sessionManager.getSessionRecordByProject(project);
+        await this.deps.sendReply(`[${project}] Approval mode: *${record.mode}*`);
+      } catch (err: unknown) {
+        await this.deps.sendReply(
+          `Failed to get mode: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return;
+    }
+
+    const [modeValue, targetProject] = args;
+    const project =
+      targetProject ?? this.deps.sessionManager.getFocusedProject(this.currentSenderId);
+
+    if (!project) {
+      await this.deps.sendReply("No focused session. Specify project: /mode auto frontend");
+      return;
+    }
+
+    if (APPROVAL_MODES.has(modeValue)) {
+      try {
+        this.deps.sessionManager.setMode(project, modeValue as ApprovalMode);
+        await this.deps.sendReply(`[${project}] Approval mode changed to *${modeValue}*`);
+      } catch (err: unknown) {
+        await this.deps.sendReply(
+          `Failed to set mode: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return;
+    }
+
+    await this.deps.sendReply(`Unknown mode "${modeValue}". Valid: confirm, plan, auto`);
+  }
+
+  private async handleOutput(args: string[]): Promise<void> {
+    const OUTPUT_MODES = new Set<string>(["verbose", "summary", "silent"]);
+
+    // /output (no args) → show current output mode
+    if (args.length === 0) {
+      const project = this.deps.sessionManager.getFocusedProject(this.currentSenderId);
+      if (!project) {
+        await this.deps.sendReply("No focused session. Use /new to create one.");
+        return;
+      }
+      try {
+        const record = this.deps.sessionManager.getSessionRecordByProject(project);
+        await this.deps.sendReply(`[${project}] Output mode: *${record.outputMode}*`);
+      } catch (err: unknown) {
+        await this.deps.sendReply(
+          `Failed to get output mode: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return;
+    }
+
+    const [modeValue, targetProject] = args;
+    const project =
+      targetProject ?? this.deps.sessionManager.getFocusedProject(this.currentSenderId);
+
+    if (!project) {
+      await this.deps.sendReply("No focused session. Specify project: /output silent frontend");
+      return;
+    }
+
+    if (OUTPUT_MODES.has(modeValue)) {
+      try {
+        this.deps.sessionManager.setOutputMode(project, modeValue as OutputMode);
+        await this.deps.sendReply(`[${project}] Output mode changed to *${modeValue}*`);
+      } catch (err: unknown) {
+        await this.deps.sendReply(
+          `Failed to set output mode: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return;
+    }
+
+    await this.deps.sendReply(
+      `Unknown output mode "${modeValue}". Valid: verbose, summary, silent`,
+    );
   }
 
   private async handlePrompt(text: string): Promise<void> {

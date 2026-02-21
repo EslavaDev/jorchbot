@@ -27,11 +27,15 @@ interface StdinPayload {
 
 interface ApprovalResponse {
   id: string;
+  autoResolved?: boolean;
+  status?: "approved" | "denied";
+  reason?: string;
 }
 
 interface PollResponse {
-  status: "pending" | "approved" | "denied";
+  status: "pending" | "approved" | "denied" | "awaiting_feedback";
   reason?: string;
+  additionalContext?: string;
 }
 
 async function readStdin(): Promise<string> {
@@ -91,6 +95,30 @@ async function main(): Promise<void> {
     }
 
     const data = (await resp.json()) as ApprovalResponse;
+
+    // Handle mode-based auto-resolution (no polling needed)
+    if (data.autoResolved) {
+      if (data.status === "approved") {
+        const output = {
+          hookSpecificOutput: {
+            permissionDecision: "allow",
+            additionalContext: "Auto-approved by session mode",
+          },
+        };
+        process.stdout.write(JSON.stringify(output));
+        process.exit(0);
+      } else {
+        const output = {
+          hookSpecificOutput: {
+            permissionDecision: "deny",
+            permissionDecisionReason: data.reason ?? "Denied by mode policy",
+          },
+        };
+        process.stdout.write(JSON.stringify(output));
+        process.exit(0);
+      }
+    }
+
     approvalId = data.id;
   } catch {
     // Gateway unreachable — deny to prevent orphaned token consumption.
@@ -120,7 +148,9 @@ async function main(): Promise<void> {
         const output = {
           hookSpecificOutput: {
             permissionDecision: "allow",
-            additionalContext: "Approved by user via WhatsApp",
+            additionalContext: data.additionalContext
+              ? `User feedback: ${data.additionalContext}`
+              : "Approved by user via WhatsApp",
           },
         };
         process.stdout.write(JSON.stringify(output));
@@ -136,6 +166,12 @@ async function main(): Promise<void> {
         };
         process.stdout.write(JSON.stringify(output));
         process.exit(0);
+      }
+
+      if (data.status === "awaiting_feedback") {
+        // User tapped "Yes + feedback" — keep polling until they send text
+        await sleep(POLL_INTERVAL_MS);
+        continue;
       }
 
       // Still pending

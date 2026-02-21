@@ -21,7 +21,11 @@ import {
   resolveContextInfo,
 } from "./context-guard.js";
 import { FocusModel } from "./focus-model.js";
+import { OutputBuffer } from "./output-buffer.js";
+import { shouldSendToChat } from "./output-filter.js";
 import { detectQuestion } from "./question-detector.js";
+import { chunkForSession } from "./session-chunker.js";
+import type { ApprovalMode, OutputMode } from "./types.js";
 
 // --- Zod schema for runtime validation (data crossing trust boundaries) ---
 
@@ -36,6 +40,8 @@ export const CreateSessionInputSchema = z.object({
   path: z.string().min(1),
   systemPrompt: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
+  initialMode: z.enum(["confirm", "plan", "auto"]).optional(),
+  initialOutputMode: z.enum(["verbose", "summary", "silent"]).optional(),
 });
 
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
@@ -57,8 +63,8 @@ export interface SessionRecord {
   path: string;
   ownerPhone: string | null;
   claudeSessionId: string | null;
-  mode: "confirm" | "plan" | "auto";
-  outputMode: "verbose" | "summary" | "silent";
+  mode: ApprovalMode;
+  outputMode: OutputMode;
   contextPercent: number;
   status: "active" | "stopped" | "error" | "paused";
   focused: boolean;
@@ -86,6 +92,10 @@ interface SessionManagerDeps {
     buttonText: string,
     options: Array<{ id: string; title: string; description?: string }>,
   ) => Promise<void>;
+  /** Targeted send: delivers a document attachment to a specific phone. */
+  sendDocumentTo?: (phone: string, content: string, filename: string) => Promise<void>;
+  /** Approval reminder delay in ms. Defaults to 10 minutes. */
+  approvalReminderDelayMs?: number;
   createRunner?: () => ClaudeRunner;
   /** Called after a session is destroyed (before focus auto-switch). Used to clean up background tasks/tunnels. */
   onSessionDestroy?: (project: string) => void;
@@ -96,6 +106,7 @@ const DEFAULT_MAX_SESSIONS = 5;
 export class SessionManager {
   private active = new Map<string, ActiveSession>();
   private pendingQuestions = new Map<string, { sessionId: string }>();
+  private outputBuffers = new Map<string, OutputBuffer>();
   private focusModel: FocusModel;
   private maxSessions: number;
   private gatewayPort: number;
@@ -114,6 +125,10 @@ export class SessionManager {
     buttonText: string,
     options: Array<{ id: string; title: string; description?: string }>,
   ) => Promise<void>;
+  private sendDocumentTo:
+    | ((phone: string, content: string, filename: string) => Promise<void>)
+    | undefined;
+  private approvalReminderDelayMs: number | undefined;
   private createRunner: () => ClaudeRunner;
   private onSessionDestroy: ((project: string) => void) | undefined;
 
@@ -130,6 +145,8 @@ export class SessionManager {
     this.sendReplyTo = deps.sendReplyTo;
     this.sendButtonsTo = deps.sendButtonsTo;
     this.sendListTo = deps.sendListTo ?? (async () => {});
+    this.sendDocumentTo = deps.sendDocumentTo;
+    this.approvalReminderDelayMs = deps.approvalReminderDelayMs;
     this.createRunner =
       deps.createRunner ?? (() => new ClaudeRunner({ contextLimit: this.contextGuardLimit }));
     this.onSessionDestroy = deps.onSessionDestroy;
@@ -170,8 +187,8 @@ export class SessionManager {
           project: validated.project,
           path: validated.path,
           ownerPhone,
-          mode: "confirm",
-          outputMode: "verbose",
+          mode: validated.initialMode ?? "confirm",
+          outputMode: validated.initialOutputMode ?? "verbose",
           contextPercent: 0,
           status: "active",
           focused: isFirstForOwner,
@@ -191,6 +208,7 @@ export class SessionManager {
           const prefix = isFirstForOwner ? "" : " (background)";
           await this.sendButtonsTo(ownerPhone, `[${validated.project}]${prefix} ${text}`, buttons);
         },
+        reminderDelayMs: this.approvalReminderDelayMs,
       });
 
       this.wireRunnerEvents(runner, id, validated.project, ownerPhone);
@@ -271,6 +289,16 @@ export class SessionManager {
         .set({ status: "stopped", updatedAt: new Date() })
         .where(eq(sessions.id, session.id))
         .run();
+
+      // Dispose output buffer for this session
+      const sessionBuffer = this.outputBuffers.get(session.id);
+      if (sessionBuffer) {
+        sessionBuffer.dispose();
+        this.outputBuffers.delete(session.id);
+      }
+
+      // Dispose approval manager timers
+      session.approval.dispose();
 
       this.active.delete(project);
 
@@ -369,14 +397,43 @@ export class SessionManager {
   }
 
   /** Resolve an approval by its ID, routing to the correct session. */
-  async resolveApproval(approvalId: string, approved: boolean): Promise<boolean> {
+  async resolveApproval(
+    approvalId: string,
+    approved: boolean,
+    feedback?: string,
+  ): Promise<boolean> {
     for (const session of this.active.values()) {
-      const resolved = await session.approval.resolveApproval(approvalId, approved);
+      const resolved = await session.approval.resolveApproval(approvalId, approved, feedback);
       if (resolved) {
         return true;
       }
     }
     return false;
+  }
+
+  /**
+   * Mark an approval as awaiting feedback text from the user.
+   * Returns the project name if the approval was found, null otherwise.
+   */
+  setAwaitingFeedback(approvalId: string): string | null {
+    for (const session of this.active.values()) {
+      if (session.approval.setAwaitingFeedback(approvalId)) {
+        return session.project;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Check if a focused session has an approval awaiting feedback text.
+   * Returns the approval ID if found, null otherwise.
+   */
+  getAwaitingFeedbackId(project: string): string | null {
+    const session = this.active.get(project);
+    if (!session) {
+      return null;
+    }
+    return session.approval.getAwaitingFeedbackId();
   }
 
   /** Answer a pending question by resuming the session with the chosen answer. */
@@ -471,6 +528,7 @@ export class SessionManager {
       const approval = new ApprovalManager({
         sessionId: record.id,
         sendButtons: (text, buttons) => this.sendButtonsTo(ownerPhone, text, buttons),
+        reminderDelayMs: this.approvalReminderDelayMs,
       });
 
       this.wireRunnerEvents(runner, record.id, record.project, ownerPhone);
@@ -494,6 +552,72 @@ export class SessionManager {
     return restored;
   }
 
+  /**
+   * Get the current session record from DB by session UUID.
+   * @throws {SessionNotFoundError} If session not found
+   */
+  getSessionRecordById(id: string): SessionRecord {
+    const db = getDb();
+    const record = db.select().from(sessions).where(eq(sessions.id, id)).get();
+    if (!record) {
+      throw new SessionNotFoundError(`Session ${id} not found in DB`);
+    }
+    return record as SessionRecord;
+  }
+
+  /**
+   * Get the current session record from DB by project name.
+   * @throws {SessionNotFoundError} If session not found
+   */
+  getSessionRecordByProject(project: string): SessionRecord {
+    const session = this.active.get(project);
+    if (!session) {
+      throw new SessionNotFoundError(`Session "${project}" not found`);
+    }
+    return this.getSessionRecordById(session.id);
+  }
+
+  /**
+   * Update the approval mode for a session.
+   * Takes effect immediately — the next tool call will use the new mode.
+   * @throws {SessionNotFoundError} If session doesn't exist
+   */
+  setMode(project: string, mode: ApprovalMode): void {
+    const session = this.active.get(project);
+    if (!session) {
+      throw new SessionNotFoundError(`Session "${project}" not found`);
+    }
+
+    const db = getDb();
+    db.update(sessions)
+      .set({ mode, updatedAt: new Date() })
+      .where(eq(sessions.id, session.id))
+      .run();
+  }
+
+  /**
+   * Update the output mode for a session.
+   * Takes effect immediately — the next event will use the new filter.
+   * @throws {SessionNotFoundError} If session doesn't exist
+   */
+  setOutputMode(project: string, outputMode: OutputMode): void {
+    const session = this.active.get(project);
+    if (!session) {
+      throw new SessionNotFoundError(`Session "${project}" not found`);
+    }
+
+    const db = getDb();
+    db.update(sessions)
+      .set({ outputMode, updatedAt: new Date() })
+      .where(eq(sessions.id, session.id))
+      .run();
+  }
+
+  /** Get the focused project name for a phone, or null. */
+  getFocusedProject(ownerPhone: string): string | null {
+    return this.focusModel.getFocused(ownerPhone);
+  }
+
   // --- Private helpers ---
 
   private wireRunnerEvents(
@@ -502,12 +626,21 @@ export class SessionManager {
     project: string,
     ownerPhone: string,
   ): void {
-    runner.on("text", (text) => {
+    // Create per-session output buffer. Flush callback sends accumulated text.
+    const buffer = new OutputBuffer((text) => {
       this.logMessage(sessionId, "outbound", "text", text);
-
-      if (this.focusModel.getFocused(ownerPhone) === project) {
-        void this.sendReplyTo(ownerPhone, `[${project}] ${text}`);
+      const record = this.getSessionRecord(sessionId);
+      if (
+        shouldSendToChat("text", record.outputMode) &&
+        this.focusModel.getFocused(ownerPhone) === project
+      ) {
+        void this.sendChunkedMessage(ownerPhone, text, project);
       }
+    });
+    this.outputBuffers.set(sessionId, buffer);
+
+    runner.on("text", (text) => {
+      buffer.append(text);
     });
 
     runner.on("toolUse", (request) => {
@@ -515,6 +648,7 @@ export class SessionManager {
     });
 
     runner.on("result", (result) => {
+      buffer.forceFlush();
       const db = getDb();
       const contextPercent = runner.getContextPercent();
       db.update(sessions)
@@ -591,6 +725,7 @@ export class SessionManager {
     });
 
     runner.on("error", (err) => {
+      buffer.forceFlush();
       this.logMessage(sessionId, "system", "error", err.message);
       void this.sendReplyTo(ownerPhone, `[${project}] Error: ${err.message}`);
     });
@@ -620,12 +755,20 @@ export class SessionManager {
   }
 
   private getSessionRecord(id: string): SessionRecord {
-    const db = getDb();
-    const record = db.select().from(sessions).where(eq(sessions.id, id)).get();
-    if (!record) {
-      throw new SessionNotFoundError(`Session ${id} not found in DB`);
+    return this.getSessionRecordById(id);
+  }
+
+  /** Send a message using smart chunking with optional document attachment. */
+  private async sendChunkedMessage(phone: string, content: string, project: string): Promise<void> {
+    const result = chunkForSession(content, project);
+
+    for (const chunk of result.chunks) {
+      await this.sendReplyTo(phone, chunk);
     }
-    return record as SessionRecord;
+
+    if (result.document && this.sendDocumentTo) {
+      await this.sendDocumentTo(phone, result.document.content, result.document.filename);
+    }
   }
 
   private updateFocusInDb(project: string, focused: boolean, ownerPhone: string): void {

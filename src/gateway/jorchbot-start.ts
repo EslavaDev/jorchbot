@@ -28,6 +28,7 @@ import { TunnelManager } from "../tunnels/manager.js";
 import { TunnelDb } from "../tunnels/tunnel-db.js";
 import type { TunnelEvent } from "../tunnels/types.js";
 import { createApprovalRouter } from "./approval-api.js";
+import { createDocumentRouter } from "./document-api.js";
 import { checkKapsoAccess } from "./kapso-access-control.js";
 
 const WHATSAPP_TEXT_LIMIT = 4096;
@@ -82,6 +83,38 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       });
     };
 
+    // Document storage for long output attachments
+    const documentRouter = createDocumentRouter();
+
+    const sendDocumentTo = async (phone: string, content: string, filename: string) => {
+      const docId = documentRouter.storeDocument(content, filename);
+      const docUrl = `http://localhost:${port}/api/documents/${docId}`;
+      try {
+        await kapsoClient.sendDocument({
+          to: phone,
+          documentUrl: docUrl,
+          filename,
+          caption: `Full output (${Math.round(content.length / 1024)}KB)`,
+        });
+      } catch {
+        // Document URL not reachable (localhost without Tailscale) — send as chunked text
+        const chunks = chunkTextForOutbound(content, WHATSAPP_TEXT_LIMIT);
+        await sendReplyTo(
+          phone,
+          `[Document unavailable — sending as text (${chunks.length} chunks)]`,
+        );
+        for (const chunk of chunks.slice(0, 5)) {
+          await kapsoClient.sendText({ to: phone, body: chunk });
+        }
+        if (chunks.length > 5) {
+          await kapsoClient.sendText({
+            to: phone,
+            body: `...(${chunks.length - 5} more chunks truncated)`,
+          });
+        }
+      }
+    };
+
     // Per-request send functions — deliver messages to the current sender.
     // Used by CommandRouter for synchronous command responses.
     let currentSenderPhone: string | null = null;
@@ -98,6 +131,17 @@ export async function startGateway(opts: StartOptions): Promise<void> {
         return;
       }
       await sendButtonsTo(currentSenderPhone, text, buttons);
+    };
+
+    const sendList = async (
+      text: string,
+      buttonText: string,
+      options: Array<{ id: string; title: string; description?: string }>,
+    ) => {
+      if (!currentSenderPhone) {
+        return;
+      }
+      await sendListTo(currentSenderPhone, text, buttonText, options);
     };
 
     // Resolve hook script directory (built hooks in dist/hooks/jorchbot/).
@@ -123,6 +167,8 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       sendReplyTo,
       sendButtonsTo,
       sendListTo,
+      sendDocumentTo,
+      approvalReminderDelayMs: config.approvals.timeoutMinutes * 60 * 1000,
       onSessionDestroy: (project: string) => {
         taskManagerRef?.stopAll(project);
         void tunnelManagerRef?.stopByProject(project);
@@ -286,6 +332,7 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       shellRunner,
       sendReply,
       sendButtons,
+      sendList,
       getJorchfileExecutor: () => jorchfileExecutor,
       taskManager,
       tunnelManager,
@@ -319,8 +366,24 @@ export async function startGateway(opts: StartOptions): Promise<void> {
           return;
         }
 
+        // Check if a focused session has an approval awaiting feedback text.
+        // If so, capture this message as feedback instead of routing to CommandRouter.
+        const messageText = message.text?.body ?? "";
+        const focusedProject = sessionManager.getFocusedProject(senderPhone);
+        if (focusedProject && messageText && !messageText.startsWith("/")) {
+          const feedbackApprovalId = sessionManager.getAwaitingFeedbackId(focusedProject);
+          if (feedbackApprovalId) {
+            await sessionManager.resolveApproval(feedbackApprovalId, true, messageText);
+            await sendReplyTo(
+              senderPhone,
+              `[${focusedProject}] Approved with feedback.\nClaude received: "${messageText}"`,
+            );
+            return;
+          }
+        }
+
         await router.route({
-          text: message.text?.body ?? "",
+          text: messageText,
           senderId: senderPhone,
           channel: "kapso",
           messageId: message.id,
@@ -331,7 +394,10 @@ export async function startGateway(opts: StartOptions): Promise<void> {
         try {
           const payload = JSON.parse(buttonId) as Record<string, unknown>;
 
-          if (payload.type === "question_answer") {
+          if (payload.type === "help_category") {
+            const { category } = payload as { category: string };
+            await router.sendHelpCategory(category);
+          } else if (payload.type === "question_answer") {
             const { project, answer } = payload as unknown as QuestionAnswerPayload;
             await sessionManager.answerQuestion(project, answer);
           } else if (payload.type === "shell_approve" || payload.type === "shell_reject") {
@@ -381,12 +447,21 @@ export async function startGateway(opts: StartOptions): Promise<void> {
               }
             }
           } else if (payload.approvalId) {
-            // Backward compat: ApprovalButtonPayload (no type field)
+            // ApprovalButtonPayload (no type field)
             const approval = payload as unknown as ApprovalButtonPayload;
-            await sessionManager.resolveApproval(
-              approval.approvalId,
-              approval.action === "approve",
-            );
+
+            if (approval.action === "feedback") {
+              // "Yes + feedback" button — mark as awaiting feedback text
+              const project = sessionManager.setAwaitingFeedback(approval.approvalId);
+              if (project) {
+                await sendReplyTo(senderPhone, `[${project}] Write your feedback for Claude:`);
+              }
+            } else {
+              await sessionManager.resolveApproval(
+                approval.approvalId,
+                approval.action === "approve",
+              );
+            }
           }
         } catch (err: unknown) {
           console.error("[jorchbot] Failed to parse button payload:", err);
@@ -400,6 +475,9 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     // Tool approval API endpoints (for Claude Code hooks)
     const approvalRouter = createApprovalRouter({ sessionManager, sendReplyTo });
     app.use(approvalRouter);
+
+    // Document attachment endpoints (for long output)
+    app.use(documentRouter.router);
 
     app.get("/webhooks/kapso", (req, res) => {
       try {
@@ -437,6 +515,7 @@ export async function startGateway(opts: StartOptions): Promise<void> {
           await active.runner.stop();
         }
       }
+      documentRouter.dispose();
       closeDb();
       process.exit(0);
     };

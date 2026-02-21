@@ -212,6 +212,83 @@ describe("Approval API", () => {
     });
   });
 
+  describe("POST /api/tool-approval — mode-based auto-resolution", () => {
+    it("auto-approves in auto mode", async () => {
+      const session = await sessionManager.create(
+        { project: "auto-proj", path: "/tmp/auto-proj" },
+        PHONE,
+      );
+      sessionManager.setMode("auto-proj", "auto");
+
+      const res = await fetchJson(server, "POST", "/api/tool-approval", {
+        sessionId: session.id,
+        toolName: "Edit",
+        toolInput: { file_path: "src/main.ts" },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.autoResolved).toBe(true);
+      expect(res.body.status).toBe("approved");
+      // No buttons should have been sent (beyond the initial session creation)
+    });
+
+    it("auto-denies write tools in plan mode with reason", async () => {
+      const session = await sessionManager.create(
+        { project: "plan-proj", path: "/tmp/plan-proj" },
+        PHONE,
+      );
+      sessionManager.setMode("plan-proj", "plan");
+
+      const res = await fetchJson(server, "POST", "/api/tool-approval", {
+        sessionId: session.id,
+        toolName: "Edit",
+        toolInput: { file_path: "src/main.ts" },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.autoResolved).toBe(true);
+      expect(res.body.status).toBe("denied");
+      expect(typeof res.body.reason).toBe("string");
+      expect(res.body.reason as string).toContain("Plan mode");
+    });
+
+    it("auto-approves read tools in plan mode", async () => {
+      const session = await sessionManager.create(
+        { project: "plan-read", path: "/tmp/plan-read" },
+        PHONE,
+      );
+      sessionManager.setMode("plan-read", "plan");
+
+      const res = await fetchJson(server, "POST", "/api/tool-approval", {
+        sessionId: session.id,
+        toolName: "Read",
+        toolInput: { file_path: "src/main.ts" },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.autoResolved).toBe(true);
+      expect(res.body.status).toBe("approved");
+    });
+
+    it("creates pending approval in confirm mode (existing flow)", async () => {
+      const session = await sessionManager.create(
+        { project: "confirm-proj", path: "/tmp/confirm-proj" },
+        PHONE,
+      );
+      // confirm is default, no setMode needed
+
+      const res = await fetchJson(server, "POST", "/api/tool-approval", {
+        sessionId: session.id,
+        toolName: "Edit",
+        toolInput: { file_path: "src/main.ts" },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.autoResolved).toBeUndefined();
+      expect(res.body.id).toBeDefined();
+    });
+  });
+
   describe("POST /api/tool-result", () => {
     it("sends result notification", async () => {
       const session = await sessionManager.create(
