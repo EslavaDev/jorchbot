@@ -320,8 +320,9 @@ await client.sendText({ to: "+1234567890", body: "Build completado!" });
 # Exponer dev server del proyecto al internet
 tailscale funnel 3000
 
-# Exponer GUI de configuracion de JorchBot
-tailscale serve 18789
+# GUI siempre accesible via tailnet (VPN mesh + MagicDNS)
+# Solo exponer via Funnel si gui.funnel = true
+tailscale funnel 18789
 ```
 
 **Limitaciones de Funnel**:
@@ -557,24 +558,47 @@ Sesiones activas: frontend (23%), backend (45%)
 
 ## 6. GUI de Configuracion
 
-Dashboard web accesible via Tailscale Serve en el puerto del Gateway.
+Dashboard web accesible via **VPN mesh de Tailscale** (MagicDNS) en el **mismo puerto
+del gateway (18789)**. Exposicion a internet via Funnel es **configurable** (`gui.funnel`).
+Extiende la Control UI existente de OpenClaw (Lit 3.x, web components nativos).
 
 ```bash
-# Accesible solo desde dispositivos en el tailnet
-tailscale serve 18789
-# URL: https://<device>.<tailnet>.ts.net/
+# Siempre accesible via tailnet (VPN mesh, sin Serve)
+# URL: http://<device>.<tailnet>.ts.net:18789/
+
+# Publico (internet) — solo si gui.funnel = true, requiere device auth
+tailscale funnel 18789
 ```
 
-**Funcionalidades**:
+**Framework**: Lit 3.3.2 (NO React/Vue/Svelte). Build con Vite 7.x.
+**Comunicacion**: WebSocket RPC exclusivamente (sin endpoints REST adicionales).
+**Auth**: Dos modos controlados por `gui.funnel` en config.json:
 
-- **Dashboard**: Estado de sesiones activas, % context, uptime
-- **Jorchfile Editor**: Editar proyectos y comandos visualmente
-- **Logs**: Ver output de Claude Code y comandos en tiempo real
-- **Tunnels**: Estado de tunnels activos, URLs
-- **Settings**: Configuracion del Gateway, canales de mensajeria
-- **API Keys** (fase 2): Gestion de keys para multi-LLM
+- `gui.funnel = false` (default): Solo IPs del tailnet (100.64.0.0/10) acceden a GUI/WS.
+  Webhooks (`/webhooks/*`) siempre pasan. No requiere device auth.
+- `gui.funnel = true`: GUI publica via Funnel. Device auth (ECDSA P-256, ya existe en
+  OpenClaw) protege GUI y WebSocket. Webhooks siempre pasan sin auth.
 
-**Tech stack de la GUI**: La que ya usa OpenClaw (WebChat UI servido desde el Gateway) + extensiones para las features de JorchBot.
+**Tabs** (12 sub-fases: 6A-6L):
+
+- **Dashboard (overview)**: Estado de workspaces activos, % context, tunnels, uptime
+- **Workspaces** (nuevo): CRUD de proyectos, focus model, acciones rapidas, comandos custom
+- **Tunnels** (nuevo): Tailscale tunnels + FunnelProxy route management (rutas bajo `/proxy/**`)
+- **Devices** (extiende nodes): Pairing, revoke, blacklist/unblock, detalle extendido por device
+- **Jorchfile Editor** (nuevo): Editar Jorchfile visualmente con validacion (requiere Fase 3)
+- **Sessions/Channels/Config/Logs/Debug**: Adaptados de OpenClaw a datos de JorchBot
+- **6 tabs ocultos**: chat, instances, usage, cron, agents, skills (via config, no eliminados)
+
+**Comando `/gui`**: Envia URL del gateway al chat. Sub-comando `/gui funnel on|off`
+permite togglear exposicion publica con **confirmacion por codigo de 4 digitos** (60s timeout)
+para prevenir activacion accidental o por acceso no autorizado al chat.
+
+**Nota sobre FunnelProxy**: El proxy de dev services (Fase 4) es un servidor separado
+en puerto 8443 con rutas bajo `/proxy/**`. No comparte puerto con el gateway. El tab
+Tunnels permite gestionar rutas del proxy desde la GUI.
+
+> Ver `docs/phase-6-gui.md` y `docs/gui-jorchbot.md` para detalles completos
+> (sub-fases 6A-6L, inventario de branding, ~50 metodos RPC, anti-patterns).
 
 ---
 
@@ -828,7 +852,7 @@ El output completo de cada sesion se almacena en un buffer interno. Para acceder
 /history                   → Resumen de todas las sesiones con ultimas acciones
 ```
 
-Tambien accesible desde la **GUI web** (via Tailscale Serve) en tiempo real con scroll infinito y busqueda.
+Tambien accesible desde la **GUI web** (via tailnet o Funnel) en tiempo real con scroll infinito y busqueda.
 
 ### 10.7 Flujo Completo Multi-Sesion (Ejemplo)
 
@@ -1533,29 +1557,37 @@ JorchBot detecta `:3000` en el comando y lo reemplaza por `:3001` si 3000 esta o
 
 ### Opcion publica con Reverse Proxy (path-based routing)
 
-Si el usuario QUIERE exponer algo a internet (Funnel), y tiene multiples proyectos,
-se usa **path-based routing** con un reverse proxy integrado:
+Si el usuario QUIERE exponer dev services a internet (Funnel), y tiene multiples
+proyectos, se usa **path-based routing** con un FunnelProxy separado (puerto 8443).
+Todas las rutas llevan prefijo `/proxy/` obligatorio para evitar colision con la SPA.
 
 ```
-Tailscale Funnel (puerto 443) → JorchBot Reverse Proxy
-  /frontend  → localhost:3000
-  /backend   → localhost:3001
-  /mobile    → localhost:19000
-  /gui       → localhost:18789 (GUI de JorchBot)
+Tailscale Funnel (puerto 8443) → FunnelProxy (servidor separado)
+  /proxy/frontend  → localhost:3000
+  /proxy/backend   → localhost:3001
+  /proxy/mobile    → localhost:19000
 ```
 
-**Configuracion en GUI**: El usuario configura las rutas desde la GUI web.
-Internamente JorchBot levanta un proxy HTTP simple (un server Node.js con `http-proxy`).
+**Nota**: La GUI NO se expone via el FunnelProxy. El gateway (18789) tiene su propio
+Funnel para webhooks de Kapso y WebSocket, y usa device auth para proteger la GUI.
 
-**URL resultante publica**:
+**Configuracion en GUI**: El usuario configura las rutas desde la GUI web (tab Tunnels).
+Internamente JorchBot levanta un proxy HTTP en un server Node.js separado (`http-proxy`).
+
+**URL resultante publica** (via FunnelProxy en puerto 8443):
 
 ```
-https://mi-pc.tailnet.ts.net/frontend   → proyecto frontend
-https://mi-pc.tailnet.ts.net/backend    → proyecto backend
-https://mi-pc.tailnet.ts.net/gui        → GUI de configuracion
+https://mi-pc.tailnet.ts.net:8443/proxy/frontend   → proyecto frontend
+https://mi-pc.tailnet.ts.net:8443/proxy/backend     → proyecto backend
 ```
 
-**Pero esto es OPCIONAL.** El default es Tailscale Serve (privado, puertos directos).
+**GUI** se accede por separado (gateway directo, puerto 18789 con device auth):
+
+```
+https://mi-pc.tailnet.ts.net:18789   → GUI de JorchBot (con device auth)
+```
+
+**Pero Funnel es OPCIONAL.** El default es Tailscale Serve (privado, puertos directos).
 
 ### Jorchfile actualizado con opciones de tunnel
 
@@ -1578,7 +1610,7 @@ PROJECT shared-demo
   dev = npm run dev
   port = 5000
   tunnel = funnel                      # publico (internet) - requiere confirmacion
-  funnel_path = /demo                  # path en el reverse proxy
+  funnel_path = /proxy/demo             # path en el FunnelProxy (siempre bajo /proxy/)
 ```
 
 Campos nuevos:
@@ -1596,43 +1628,47 @@ Bot:  Tunnels activos:
       PRIVADOS (tailnet only):
       1. frontend → https://mi-pc.tailnet.ts.net:3000  (Serve)
       2. backend  → https://mi-pc.tailnet.ts.net:3001  (Serve, auto-port)
-      3. gui      → https://mi-pc.tailnet.ts.net:18789 (Serve)
 
-      PUBLICOS (internet):
-      4. demo     → https://mi-pc.tailnet.ts.net/demo  (Funnel + proxy)
+      PUBLICOS (via FunnelProxy :8443):
+      3. demo     → https://mi-pc.tailnet.ts.net:8443/proxy/demo  (Funnel)
+
+      GATEWAY (siempre activo, device auth):
+      4. gui      → https://mi-pc.tailnet.ts.net:18789
 ```
 
 ### Resumen de networking
 
-| Modo                | Acceso               | Puertos                  | Cuando usar                             |
-| ------------------- | -------------------- | ------------------------ | --------------------------------------- |
-| **Serve** (default) | Solo tailnet         | Ilimitados               | Desarrollo personal, default seguro     |
-| **Funnel**          | Internet publico     | 443, 8443, 10000         | Compartir con externos, demos           |
-| **Funnel + proxy**  | Internet publico     | 1 puerto Funnel, N paths | Multiples proyectos publicos            |
-| ~~Cloudflare~~      | ~~Internet publico~~ | ~~Cualquiera~~           | **ELIMINADO (rev. 2)** — solo Tailscale |
+| Modo                | Acceso               | Puertos                      | Cuando usar                             |
+| ------------------- | -------------------- | ---------------------------- | --------------------------------------- |
+| **Serve** (default) | Solo tailnet         | Ilimitados                   | Desarrollo personal, default seguro     |
+| **Funnel**          | Internet publico     | 443, 8443, 10000             | Compartir con externos, demos           |
+| **Funnel + proxy**  | Internet publico     | Puerto 8443, rutas /proxy/\* | Multiples dev services publicos         |
+| **Gateway Funnel**  | Internet publico     | Puerto 18789 + device auth   | Webhooks Kapso + GUI (autenticada)      |
+| ~~Cloudflare~~      | ~~Internet publico~~ | ~~Cualquiera~~               | **ELIMINADO (rev. 2)** — solo Tailscale |
 
 ---
 
 ## 16. Resumen de Decisiones Tecnicas
 
-| Aspecto                | Decision                                       | Razon                                          |
-| ---------------------- | ---------------------------------------------- | ---------------------------------------------- |
-| Lenguaje               | TypeScript                                     | Base OpenClaw + ecosistema completo en TS      |
-| Runtime                | Node.js >= 22                                  | Compatibilidad con OpenClaw                    |
-| Package Manager        | pnpm                                           | Monorepo, como OpenClaw                        |
-| Base de datos          | SQLite (better-sqlite3 + Drizzle ORM)          | Local-first, ACID, queries SQL, backup trivial |
-| WhatsApp               | Kapso.ai (API oficial Meta)                    | Botones, listas, estable, $0-25/mes            |
-| Telegram               | gramY                                          | Ya integrado en OpenClaw                       |
-| Tunneling default      | Tailscale Serve (PRIVADO)                      | Solo tailnet, sin limite de puertos, seguro    |
-| Tunneling publico      | Tailscale Funnel + reverse proxy               | Cuando se necesita acceso externo              |
-| ~~Tunneling fallback~~ | ~~Cloudflare Quick Tunnel~~                    | **ELIMINADO (rev. 2)** — solo Tailscale        |
-| Mensajes largos        | Smart split + documento adjunto                | Respetar 4096 chars sin perder info            |
-| Sesiones               | Workspaces (Claude + Shell + Jorchfile)        | No solo AI, tambien comandos directos          |
-| Port conflicts         | Auto-discovery + PORT env var                  | Auto-increment si puerto ocupado               |
-| Logs                   | SQLite con retencion configurable (7-90 dias)  | Queryable, purgable, exportable                |
-| Shell mode             | Prefijo `$` + shortcuts `/ls`, `/cat`, `/grep` | Acceso directo sin consumir tokens             |
-| Aprobaciones           | 3 botones: Yes / Yes+feedback / No             | Replica Tab/texto/Esc del CLI                  |
-| Aprobaciones complejas | Listas Kapso (hasta 10 items)                  | Aprobar/rechazar acciones individuales         |
+| Aspecto                | Decision                                          | Razon                                          |
+| ---------------------- | ------------------------------------------------- | ---------------------------------------------- |
+| Lenguaje               | TypeScript                                        | Base OpenClaw + ecosistema completo en TS      |
+| Runtime                | Node.js >= 22                                     | Compatibilidad con OpenClaw                    |
+| Package Manager        | pnpm                                              | Monorepo, como OpenClaw                        |
+| Base de datos          | SQLite (better-sqlite3 + Drizzle ORM)             | Local-first, ACID, queries SQL, backup trivial |
+| WhatsApp               | Kapso.ai (API oficial Meta)                       | Botones, listas, estable, $0-25/mes            |
+| Telegram               | gramY                                             | Ya integrado en OpenClaw                       |
+| Tunneling default      | Tailscale Serve (PRIVADO)                         | Solo tailnet, sin limite de puertos, seguro    |
+| Tunneling publico      | Tailscale Funnel + FunnelProxy (:8443, /proxy/\*) | Dev services publicos, separado del gateway    |
+| GUI                    | Lit 3.x (Control UI) + gui.funnel + device auth   | VPN mesh (default) o Funnel con auth, WS RPC   |
+| ~~Tunneling fallback~~ | ~~Cloudflare Quick Tunnel~~                       | **ELIMINADO (rev. 2)** — solo Tailscale        |
+| Mensajes largos        | Smart split + documento adjunto                   | Respetar 4096 chars sin perder info            |
+| Sesiones               | Workspaces (Claude + Shell + Jorchfile)           | No solo AI, tambien comandos directos          |
+| Port conflicts         | Auto-discovery + PORT env var                     | Auto-increment si puerto ocupado               |
+| Logs                   | SQLite con retencion configurable (7-90 dias)     | Queryable, purgable, exportable                |
+| Shell mode             | Prefijo `$` + shortcuts `/ls`, `/cat`, `/grep`    | Acceso directo sin consumir tokens             |
+| Aprobaciones           | 3 botones: Yes / Yes+feedback / No                | Replica Tab/texto/Esc del CLI                  |
+| Aprobaciones complejas | Listas Kapso (hasta 10 items)                     | Aprobar/rechazar acciones individuales         |
 
 ---
 
