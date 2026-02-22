@@ -89,3 +89,11 @@ export const settings = sqliteTable("settings", {
   value: text("value").notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
+
+// --- Device Blacklist (Phase 6I) ---
+
+export const deviceBlacklist = sqliteTable("device_blacklist", {
+  deviceId: text("device_id").primaryKey(),
+  reason: text("reason"),
+  blockedAt: integer("blocked_at", { mode: "timestamp" }).notNull(),
+});

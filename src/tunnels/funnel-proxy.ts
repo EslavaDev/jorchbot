@@ -274,8 +274,13 @@ export class FunnelProxy {
   }
 
   private normalizePath(path: string): string {
-    // Ensure path starts with / and doesn't end with /
+    // Ensure leading /
     let p = path.startsWith("/") ? path : `/${path}`;
+    // Ensure /proxy/ prefix
+    if (!p.startsWith("/proxy/")) {
+      p = `/proxy${p}`;
+    }
+    // Remove trailing slash (except root)
     if (p.length > 1 && p.endsWith("/")) {
       p = p.slice(0, -1);
     }

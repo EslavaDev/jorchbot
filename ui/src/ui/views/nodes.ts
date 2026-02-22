@@ -7,6 +7,7 @@ import type {
 } from "../controllers/devices.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "../controllers/exec-approvals.ts";
 import { formatRelativeTimestamp, formatList } from "../format.ts";
+import type { BlockedDevice } from "../types.ts";
 import { renderExecApprovals, resolveExecApprovalsState } from "./nodes-exec-approvals.ts";
 export type NodesProps = {
   loading: boolean;
@@ -14,6 +15,8 @@ export type NodesProps = {
   devicesLoading: boolean;
   devicesError: string | null;
   devicesList: DevicePairingList | null;
+  blockedDevices: BlockedDevice[];
+  blockedDevicesLoading: boolean;
   configForm: Record<string, unknown> | null;
   configLoading: boolean;
   configSaving: boolean;
@@ -33,6 +36,9 @@ export type NodesProps = {
   onDeviceReject: (requestId: string) => void;
   onDeviceRotate: (deviceId: string, role: string, scopes?: string[]) => void;
   onDeviceRevoke: (deviceId: string, role: string) => void;
+  onDeviceRemove: (deviceId: string) => void;
+  onDeviceBlock: (deviceId: string) => void;
+  onDeviceUnblock: (deviceId: string) => void;
   onLoadConfig: () => void;
   onLoadExecApprovals: () => void;
   onBindDefault: (nodeId: string | null) => void;
@@ -52,10 +58,11 @@ export function renderNodes(props: NodesProps) {
     ${renderExecApprovals(approvalsState)}
     ${renderBindings(bindingState)}
     ${renderDevices(props)}
+    ${renderBlockedDevices(props)}
     <section class="card">
       <div class="row" style="justify-content: space-between;">
         <div>
-          <div class="card-title">Nodes</div>
+          <div class="card-title">Devices</div>
           <div class="card-sub">Paired devices and live links.</div>
         </div>
         <button class="btn" ?disabled=${props.loading} @click=${props.onRefresh}>
@@ -66,7 +73,7 @@ export function renderNodes(props: NodesProps) {
         ${
           props.nodes.length === 0
             ? html`
-                <div class="muted">No nodes found.</div>
+                <div class="muted">No devices found.</div>
               `
             : props.nodes.map((n) => renderNode(n))
         }
@@ -147,6 +154,9 @@ function renderPendingDevice(req: PendingDevice, props: NodesProps) {
           <button class="btn btn--sm" @click=${() => props.onDeviceReject(req.requestId)}>
             Reject
           </button>
+          <button class="btn btn--sm danger" @click=${() => props.onDeviceBlock(req.deviceId)}>
+            Block
+          </button>
         </div>
       </div>
     </div>
@@ -177,6 +187,14 @@ function renderPairedDevice(device: PairedDevice, props: NodesProps) {
               </div>
             `
         }
+        <div class="row" style="margin-top: 8px; justify-content: flex-end; gap: 8px;">
+          <button class="btn btn--sm" @click=${() => props.onDeviceRemove(device.deviceId)}>
+            Remove
+          </button>
+          <button class="btn btn--sm danger" @click=${() => props.onDeviceBlock(device.deviceId)}>
+            Block
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -212,6 +230,46 @@ function renderTokenRow(deviceId: string, token: DeviceTokenSummary, props: Node
         }
       </div>
     </div>
+  `;
+}
+
+function renderBlockedDevices(props: NodesProps) {
+  const blocked = props.blockedDevices;
+  if (blocked.length === 0) {
+    return nothing;
+  }
+  return html`
+    <section class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <div class="card-title">Blocked</div>
+          <div class="card-sub">Blocked devices cannot connect to the GUI.</div>
+        </div>
+      </div>
+      <div class="list" style="margin-top: 16px;">
+        ${blocked.map(
+          (device) => html`
+            <div class="list-item">
+              <div class="list-main">
+                <div class="list-title">${device.deviceId}</div>
+                <div class="list-sub">
+                  ${device.reason ? `reason: ${device.reason}` : "no reason"}
+                  ${device.blockedAt ? ` · blocked ${formatRelativeTimestamp(device.blockedAt)}` : ""}
+                </div>
+              </div>
+              <div class="list-meta">
+                <button
+                  class="btn btn--sm"
+                  @click=${() => props.onDeviceUnblock(device.deviceId)}
+                >
+                  Unblock
+                </button>
+              </div>
+            </div>
+          `,
+        )}
+      </div>
+    </section>
   `;
 }
 

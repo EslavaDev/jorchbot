@@ -79,12 +79,15 @@ import type {
   SkillStatusReport,
   StatusSummary,
   NostrProfile,
+  WorkspacesListResult,
 } from "./types.ts";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types.ts";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
 
 declare global {
   interface Window {
+    __JORCHBOT_CONTROL_UI_BASE_PATH__?: string;
+    /** @deprecated Use __JORCHBOT_CONTROL_UI_BASE_PATH__ instead. */
     __OPENCLAW_CONTROL_UI_BASE_PATH__?: string;
   }
 }
@@ -104,8 +107,8 @@ function resolveOnboardingMode(): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-@customElement("openclaw-app")
-export class OpenClawApp extends LitElement {
+@customElement("jorchbot-app")
+export class JorchBotApp extends LitElement {
   private i18nController = new I18nController(this);
   @state() settings: UiSettings = loadSettings();
   constructor() {
@@ -115,7 +118,7 @@ export class OpenClawApp extends LitElement {
     }
   }
   @state() password = "";
-  @state() tab: Tab = "chat";
+  @state() tab: Tab = "overview";
   @state() onboarding = resolveOnboardingMode();
   @state() connected = false;
   @state() theme: ThemeMode = this.settings.theme ?? "system";
@@ -169,6 +172,8 @@ export class OpenClawApp extends LitElement {
   @state() execApprovalQueue: ExecApprovalRequest[] = [];
   @state() execApprovalBusy = false;
   @state() execApprovalError: string | null = null;
+  @state() blockedDevicesLoading = false;
+  @state() blockedDevicesResult: import("./types.js").BlockedDevicesResult | null = null;
   @state() pendingGatewayUrl: string | null = null;
 
   @state() configLoading = false;
@@ -229,6 +234,23 @@ export class OpenClawApp extends LitElement {
   @state() agentSkillsError: string | null = null;
   @state() agentSkillsReport: SkillStatusReport | null = null;
   @state() agentSkillsAgentId: string | null = null;
+
+  @state() workspacesLoading = false;
+  @state() workspacesResult: WorkspacesListResult | null = null;
+  @state() workspacesError: string | null = null;
+
+  @state() tunnelsLoading = false;
+  @state() tunnelsResult: import("./types.js").TunnelsListResult | null = null;
+  @state() tunnelsError: string | null = null;
+  @state() proxyRoutesResult: import("./types.js").ProxyRoutesListResult | null = null;
+  @state() proxyStatusResult: import("./types.js").ProxyStatusResult | null = null;
+
+  @state() jorchfileLoading = false;
+  @state() jorchfileResult: import("./types.js").JorchfileView | null = null;
+  @state() jorchfileError: string | null = null;
+  @state() jorchfileRaw = "";
+  @state() jorchfileDirty = false;
+  @state() jorchfileTextMode = false;
 
   @state() sessionsLoading = false;
   @state() sessionsResult: SessionsListResult | null = null;
@@ -583,3 +605,6 @@ export class OpenClawApp extends LitElement {
     return renderApp(this as unknown as AppViewState);
   }
 }
+
+/** Backwards-compatible alias — internal modules still reference the old name. */
+export type { JorchBotApp as OpenClawApp };

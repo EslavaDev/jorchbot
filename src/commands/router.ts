@@ -7,6 +7,8 @@ import type { ShellRunner } from "../sessions/jorchbot/shell-runner.js";
 import type { ApprovalMode, OutputMode } from "../sessions/jorchbot/types.js";
 import { TunnelPendingConfirmation } from "../tunnels/manager.js";
 import type { TunnelManager } from "../tunnels/manager.js";
+import type { GuiCommandDeps } from "./gui-command.js";
+import { handleGuiCommand } from "./gui-command.js";
 
 export interface IncomingMessage {
   text: string;
@@ -37,6 +39,7 @@ export interface CommandRouterDeps {
   taskManager?: BackgroundTaskManager;
   tunnelManager?: TunnelManager;
   readMakefileTargets?: typeof ReadMakefileTargetsFn;
+  guiCommandDeps?: GuiCommandDeps;
 }
 
 export class CommandRouter {
@@ -189,6 +192,11 @@ export class CommandRouter {
         return;
       case "output":
         await this.handleOutput(args);
+        return;
+
+      // Phase 6: GUI command
+      case "gui":
+        await this.handleGui(args);
         return;
 
       // General
@@ -941,6 +949,8 @@ export class CommandRouter {
           "/tunnel <project> [port] --public — Start public tunnel (Funnel)",
           "/tunnel-stop <project> [port] — Stop tunnel(s)",
           "/tunnels — List all active tunnels",
+          "/gui — Show GUI URL",
+          "/gui funnel on|off — Toggle public GUI access",
           "/help — Command list",
           "/help --full — Full command reference",
           "/status — Gateway status",
@@ -1026,6 +1036,10 @@ export class CommandRouter {
       "!compact — Compact focused session",
       "!clear — Reset focused session",
       "!<command> — Send as prompt to Claude Code",
+      "",
+      "*GUI:*",
+      "/gui — Show GUI URL",
+      "/gui funnel on|off — Toggle public GUI access",
       "",
       "*Other:*",
       "/help — Command list",
@@ -1149,6 +1163,15 @@ export class CommandRouter {
     await this.deps.sendReply(
       `Unknown output mode "${modeValue}". Valid: verbose, summary, silent`,
     );
+  }
+
+  private async handleGui(args: string[]): Promise<void> {
+    const guiDeps = this.deps.guiCommandDeps;
+    if (!guiDeps) {
+      await this.deps.sendReply("GUI command not available.");
+      return;
+    }
+    await handleGuiCommand(args.join(" "), guiDeps);
   }
 
   private async handlePrompt(text: string): Promise<void> {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../../db/index.js";
@@ -103,7 +104,7 @@ interface SessionManagerDeps {
 
 const DEFAULT_MAX_SESSIONS = 5;
 
-export class SessionManager {
+export class SessionManager extends EventEmitter {
   private active = new Map<string, ActiveSession>();
   private pendingQuestions = new Map<string, { sessionId: string }>();
   private outputBuffers = new Map<string, OutputBuffer>();
@@ -133,6 +134,7 @@ export class SessionManager {
   private onSessionDestroy: ((project: string) => void) | undefined;
 
   constructor(deps: SessionManagerDeps) {
+    super();
     this.maxSessions = deps.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.gatewayPort = deps.gatewayPort ?? 18789;
     this.hookScriptDir = deps.hookScriptDir ?? null;
@@ -641,6 +643,8 @@ export class SessionManager {
 
     runner.on("text", (text) => {
       buffer.append(text);
+      // Emit output for WS broadcast (Phase 6C)
+      this.emit("output", project, text);
     });
 
     runner.on("toolUse", (request) => {
@@ -661,6 +665,14 @@ export class SessionManager {
         .run();
 
       const isFocused = this.focusModel.getFocused(ownerPhone) === project;
+
+      // Emit state change for WS broadcast (Phase 6C)
+      this.emit("stateChange", project, {
+        contextPercent,
+        mode: "confirm",
+        status: "active",
+        focused: isFocused,
+      });
 
       // Detect questions and send interactive buttons/lists instead of "Completed"
       const question = detectQuestion(result.textContent);

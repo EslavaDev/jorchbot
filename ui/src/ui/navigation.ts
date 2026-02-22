@@ -24,7 +24,11 @@ export type Tab =
   | "chat"
   | "config"
   | "debug"
-  | "logs";
+  | "logs"
+  // JorchBot additions:
+  | "workspaces"
+  | "tunnels"
+  | "jorchfile";
 
 const TAB_PATHS: Record<Tab, string> = {
   agents: "/agents",
@@ -40,6 +44,45 @@ const TAB_PATHS: Record<Tab, string> = {
   config: "/config",
   debug: "/debug",
   logs: "/logs",
+  // JorchBot additions:
+  workspaces: "/workspaces",
+  tunnels: "/tunnels",
+  jorchfile: "/jorchfile",
+};
+
+/** Tabs hidden from the JorchBot sidebar (OpenClaw-specific, not relevant). */
+const HIDDEN_TABS: ReadonlySet<Tab> = new Set([
+  "chat",
+  "instances",
+  "usage",
+  "cron",
+  "agents",
+  "skills",
+]);
+
+/** JorchBot-specific tab groups — replaces TAB_GROUPS in the sidebar. */
+const JB_TAB_GROUPS: ReadonlyArray<{ label: string; tabs: Tab[] }> = [
+  { label: "jorchbot", tabs: ["overview", "workspaces", "sessions"] },
+  { label: "infrastructure", tabs: ["tunnels", "channels"] },
+  { label: "configuration", tabs: ["jorchfile", "config"] },
+  { label: "system", tabs: ["nodes", "debug", "logs"] },
+];
+
+/**
+ * Visible tab groups for JorchBot.
+ * Filters out hidden tabs and removes empty groups.
+ */
+export const VISIBLE_TAB_GROUPS = JB_TAB_GROUPS.map((group) => ({
+  ...group,
+  tabs: group.tabs.filter((tab) => !HIDDEN_TABS.has(tab)),
+})).filter((group) => group.tabs.length > 0);
+
+/** Title overrides for renamed/new JorchBot tabs. */
+const JB_TAB_TITLES: Partial<Record<Tab, string>> = {
+  nodes: "Devices",
+  workspaces: "Workspaces",
+  tunnels: "Tunnels",
+  jorchfile: "Jorchfile",
 };
 
 const PATH_TO_TAB = new Map(Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as Tab]));
@@ -81,6 +124,11 @@ export function pathForTab(tab: Tab, basePath = ""): string {
   return base ? `${base}${path}` : path;
 }
 
+/** Check if a tab is hidden in JorchBot's sidebar. */
+export function isHiddenTab(tab: Tab): boolean {
+  return HIDDEN_TABS.has(tab);
+}
+
 export function tabFromPath(pathname: string, basePath = ""): Tab | null {
   const base = normalizeBasePath(basePath);
   let path = pathname || "/";
@@ -96,7 +144,7 @@ export function tabFromPath(pathname: string, basePath = ""): Tab | null {
     normalized = "/";
   }
   if (normalized === "/") {
-    return "chat";
+    return "overview";
   }
   return PATH_TO_TAB.get(normalized) ?? null;
 }
@@ -151,13 +199,19 @@ export function iconForTab(tab: Tab): IconName {
       return "bug";
     case "logs":
       return "scrollText";
+    case "workspaces":
+      return "folder";
+    case "tunnels":
+      return "link";
+    case "jorchfile":
+      return "fileText";
     default:
       return "folder";
   }
 }
 
 export function titleForTab(tab: Tab) {
-  return t(`tabs.${tab}`);
+  return JB_TAB_TITLES[tab] ?? t(`tabs.${tab}`);
 }
 
 export function subtitleForTab(tab: Tab) {

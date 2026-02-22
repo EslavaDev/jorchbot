@@ -37,7 +37,7 @@ describe("JorchBot database", () => {
     expect(db1).toBe(db2);
   });
 
-  it("creates all 5 tables after migration", () => {
+  it("creates all 6 tables after migration", () => {
     const db = getDb();
     const raw = (
       db as unknown as {
@@ -56,7 +56,8 @@ describe("JorchBot database", () => {
     expect(tableNames).toContain("tunnels");
     expect(tableNames).toContain("approvals");
     expect(tableNames).toContain("settings");
-    expect(tableNames).toHaveLength(5);
+    expect(tableNames).toContain("device_blacklist");
+    expect(tableNames).toHaveLength(6);
   });
 
   it("enforces foreign key constraints", () => {

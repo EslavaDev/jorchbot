@@ -7,10 +7,13 @@ import type {
   QuestionAnswerPayload,
 } from "../../extensions/kapso/src/types.js";
 import { createWebhookHandlers } from "../../extensions/kapso/src/webhook.js";
+import type { FunnelConfirmation, GuiCommandDeps } from "../commands/gui-command.js";
+import { handleFunnelConfirmation } from "../commands/gui-command.js";
 import { CommandRouter } from "../commands/router.js";
 import { loadConfig } from "../config/jorchbot-config-loader.js";
 import { closeDb, getDb } from "../db/index.js";
 import { JorchBotError } from "../errors/index.js";
+import { resolveControlUiRootSync } from "../infra/control-ui-assets.js";
 import { JorchfileExecutor } from "../jorchfile/executor.js";
 import { loadJorchfile } from "../jorchfile/loader.js";
 import { readMakefileTargets } from "../jorchfile/makefile-reader.js";
@@ -28,8 +31,14 @@ import { TunnelManager } from "../tunnels/manager.js";
 import { TunnelDb } from "../tunnels/tunnel-db.js";
 import type { TunnelEvent } from "../tunnels/types.js";
 import { createApprovalRouter } from "./approval-api.js";
+import { handleControlUiHttpRequest } from "./control-ui.js";
 import { createDocumentRouter } from "./document-api.js";
+import { createGuiAccessMiddleware } from "./gui-access.js";
+import { buildRpcHandlers } from "./jorchbot-ws-handlers.js";
+import { attachJorchBotWsServer } from "./jorchbot-ws.js";
 import { checkKapsoAccess } from "./kapso-access-control.js";
+import { LogBuffer, interceptConsole } from "./log-buffer.js";
+import { isTailnetIp } from "./tailnet-ip.js";
 
 const WHATSAPP_TEXT_LIMIT = 4096;
 
@@ -44,12 +53,15 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     const port = opts.port ? Number.parseInt(opts.port, 10) : config.gateway.port;
     const host = opts.host ?? config.gateway.host;
 
+    // F.7 — Log buffer for logs.tail RPC (intercept console before any logging)
+    const logBuffer = new LogBuffer();
+    interceptConsole(logBuffer);
+
     getDb();
 
-    const kapsoConfig = config.channels.kapso;
     const kapsoClient = new KapsoClient({
-      apiKey: kapsoConfig.apiKey,
-      phoneNumberId: kapsoConfig.phoneNumberId,
+      apiKey: config.channels.kapso.apiKey,
+      phoneNumberId: config.channels.kapso.phoneNumberId,
     });
 
     // Targeted send functions — deliver messages to a specific phone number.
@@ -327,6 +339,24 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     });
     watcher.start(jorchfile);
 
+    // --- Phase 6K: GUI command deps ---
+    let pendingFunnelConfirmation: FunnelConfirmation | null = null;
+    const guiCommandDeps: GuiCommandDeps = {
+      sendReply,
+      getPort: () => port,
+      getPendingConfirmation: () => pendingFunnelConfirmation,
+      setPendingConfirmation: (c) => {
+        pendingFunnelConfirmation = c;
+      },
+      onFunnelToggle: async (enabled) => {
+        if (enabled) {
+          await funnelAdapter.start(port, port);
+        } else {
+          await funnelAdapter.stop(port);
+        }
+      },
+    };
+
     const router = new CommandRouter({
       sessionManager,
       shellRunner,
@@ -337,6 +367,7 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       taskManager,
       tunnelManager,
       readMakefileTargets,
+      guiCommandDeps,
     });
 
     // Restore sessions from DB (gateway restart)
@@ -352,13 +383,13 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     }
 
     const webhookHandlers = createWebhookHandlers({
-      verifyToken: kapsoConfig.webhookVerifyToken,
-      webhookSecret: kapsoConfig.webhookSecret,
+      verifyToken: config.channels.kapso.webhookVerifyToken,
+      webhookSecret: config.channels.kapso.webhookSecret,
       onMessage: async (message, senderPhone) => {
         console.log("[jorchbot] message received from:", senderPhone, "text:", message.text?.body);
         currentSenderPhone = senderPhone;
 
-        const access = await checkKapsoAccess(senderPhone, kapsoConfig);
+        const access = await checkKapsoAccess(senderPhone, config.channels.kapso);
         if (!access.allowed) {
           if (access.pairingMessage) {
             await kapsoClient.sendText({ to: senderPhone, body: access.pairingMessage });
@@ -378,6 +409,14 @@ export async function startGateway(opts: StartOptions): Promise<void> {
               senderPhone,
               `[${focusedProject}] Approved with feedback.\nClaude received: "${messageText}"`,
             );
+            return;
+          }
+        }
+
+        // K.9 — Check for pending funnel confirmation code BEFORE command routing
+        if (messageText && !messageText.startsWith("/")) {
+          const consumed = await handleFunnelConfirmation(messageText, guiCommandDeps);
+          if (consumed) {
             return;
           }
         }
@@ -480,6 +519,10 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     app.use(documentRouter.router);
 
     app.get("/webhooks/kapso", (req, res) => {
+      if (!config.channels.kapso.enabled) {
+        res.sendStatus(503);
+        return;
+      }
       try {
         webhookHandlers.verify(req, res);
       } catch (err: unknown) {
@@ -489,6 +532,10 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     });
 
     app.post("/webhooks/kapso", (req, res) => {
+      if (!config.channels.kapso.enabled) {
+        res.sendStatus(503);
+        return;
+      }
       webhookHandlers.receive(req, res).catch((err: unknown) => {
         console.error("[jorchbot] Webhook receive error:", err);
       });
@@ -498,17 +545,78 @@ export async function startGateway(opts: StartOptions): Promise<void> {
       res.json({ status: "ok", uptime: Math.floor((Date.now() - startTime) / 1000) });
     });
 
+    // --- Phase 6D: GUI access middleware (tailnet/funnel check) ---
+    app.use(createGuiAccessMiddleware(() => config));
+
+    // --- Phase 6: Control UI ---
+    const controlUiRoot = resolveControlUiRootSync({});
+
+    if (controlUiRoot) {
+      app.use((req, res, next) => {
+        const handled = handleControlUiHttpRequest(req, res, {
+          root: { kind: "resolved", path: controlUiRoot },
+          basePath: "",
+          config: { ui: { assistant: { name: "JorchBot" } } },
+        });
+        if (!handled) {
+          next();
+        }
+      });
+    } else {
+      console.warn("[jorchbot] Control UI assets not found — run 'pnpm ui:build'");
+    }
+
     const startTime = Date.now();
 
+    // C.25 — Store the HTTP server reference for WS attachment
+    const server = app.listen(port, host, () => {
+      console.log(`[jorchbot] gateway ready on ${host}:${port}`);
+      console.log("[jorchbot] database initialized");
+      console.log(`[jorchbot] webhook URL: http://${host}:${port}/webhooks/kapso`);
+      if (controlUiRoot) {
+        console.log(`[jorchbot] Control UI mounted at http://${host}:${port}/`);
+      }
+      console.log("[jorchbot] press Ctrl+C to stop");
+    });
+
+    // C.26 — Build RPC handlers
+    const rpcHandlers = buildRpcHandlers({
+      sessionManager,
+      tunnelManager,
+      getJorchfileExecutor: () => jorchfileExecutor,
+      config,
+      getUptime: () => Math.floor((Date.now() - startTime) / 1000),
+      logBuffer,
+    });
+
+    // C.27 — Attach WebSocket server
+    const wsServer = attachJorchBotWsServer({
+      httpServer: server,
+      handlers: rpcHandlers,
+      requireAuth: config.gui.funnel,
+      isIpAllowed: (ip) => isTailnetIp(ip),
+    });
+
+    // C.28-C.30 — Wire events from managers to WS broadcast
+    sessionManager.on("stateChange", (project: string, state: Record<string, unknown>) => {
+      wsServer.broadcast("jb.session.state", { project, ...state });
+    });
+    sessionManager.on("output", (project: string, text: string) => {
+      wsServer.broadcast("jb.session.output", { project, text });
+    });
+    tunnelManager.on("tunnelEvent", (event: Record<string, unknown>) => {
+      wsServer.broadcast("jb.tunnel.state", event);
+    });
+
+    // C.31 — Shutdown handler with wsServer.close()
     const shutdown = async () => {
       console.log("[jorchbot] shutting down...");
-      // Stop watcher, background tasks, and tunnels
+      wsServer.close();
       watcher.stop();
       for (const task of taskManager.listAll()) {
         taskManager.stopAll(task.project);
       }
       await tunnelManager.stopAll();
-      // Stop all active sessions gracefully
       for (const session of sessionManager.listActive()) {
         const active = sessionManager.getByProject(session.project);
         if (active) {
@@ -521,13 +629,6 @@ export async function startGateway(opts: StartOptions): Promise<void> {
     };
     process.on("SIGINT", () => void shutdown());
     process.on("SIGTERM", () => void shutdown());
-
-    app.listen(port, host, () => {
-      console.log(`[jorchbot] gateway ready on ${host}:${port}`);
-      console.log("[jorchbot] database initialized");
-      console.log(`[jorchbot] webhook URL: http://${host}:${port}/webhooks/kapso`);
-      console.log("[jorchbot] press Ctrl+C to stop");
-    });
   } catch (err: unknown) {
     if (err instanceof JorchBotError) {
       console.error(`[jorchbot] ${err.name}: ${err.message}`);

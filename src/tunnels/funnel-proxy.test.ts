@@ -142,15 +142,48 @@ describe("FunnelProxy", () => {
       ).toThrow(FunnelProxyRouteConflictError);
     });
 
-    it("normalizes paths (strips trailing slash, adds leading slash)", () => {
+    it("normalizes paths (strips trailing slash, adds leading slash, adds /proxy/ prefix)", () => {
       proxy.addRoute({
         path: "frontend/",
         target: "http://localhost:3000",
         project: "frontend",
       });
 
-      expect(proxy.hasRoute("/frontend")).toBe(true);
-      expect(proxy.hasRoute("/frontend/")).toBe(true);
+      expect(proxy.hasRoute("/proxy/frontend")).toBe(true);
+      expect(proxy.hasRoute("/proxy/frontend/")).toBe(true);
+    });
+
+    it("addRoute('frontend', ...) becomes /proxy/frontend", () => {
+      proxy.addRoute({
+        path: "frontend",
+        target: "http://localhost:3000",
+        project: "frontend",
+      });
+      const routes = proxy.listRoutes();
+      expect(routes).toHaveLength(1);
+      expect(routes[0].path).toBe("/proxy/frontend");
+    });
+
+    it("addRoute('/api', ...) becomes /proxy/api", () => {
+      proxy.addRoute({
+        path: "/api",
+        target: "http://localhost:4000",
+        project: "api",
+      });
+      const routes = proxy.listRoutes();
+      expect(routes).toHaveLength(1);
+      expect(routes[0].path).toBe("/proxy/api");
+    });
+
+    it("addRoute('/proxy/demo', ...) stays /proxy/demo", () => {
+      proxy.addRoute({
+        path: "/proxy/demo",
+        target: "http://localhost:5000",
+        project: "demo",
+      });
+      const routes = proxy.listRoutes();
+      expect(routes).toHaveLength(1);
+      expect(routes[0].path).toBe("/proxy/demo");
     });
   });
 
@@ -161,13 +194,13 @@ describe("FunnelProxy", () => {
 
       try {
         proxy.addRoute({
-          path: "/frontend",
+          path: "/proxy/frontend",
           target: `http://127.0.0.1:${targetPort}`,
           project: "frontend",
         });
         await proxy.start();
 
-        const res = await httpGet(`http://127.0.0.1:${proxyPort}/frontend/index.html`);
+        const res = await httpGet(`http://127.0.0.1:${proxyPort}/proxy/frontend/index.html`);
         expect(res.statusCode).toBe(200);
 
         const body = JSON.parse(res.body) as { url: string };
@@ -183,13 +216,13 @@ describe("FunnelProxy", () => {
 
       try {
         proxy.addRoute({
-          path: "/api",
+          path: "/proxy/api",
           target: `http://127.0.0.1:${targetPort}`,
           project: "api",
         });
         await proxy.start();
 
-        const res = await httpGet(`http://127.0.0.1:${proxyPort}/api/v1/users`);
+        const res = await httpGet(`http://127.0.0.1:${proxyPort}/proxy/api/v1/users`);
         expect(res.statusCode).toBe(200);
 
         const body = JSON.parse(res.body) as { url: string };
@@ -213,15 +246,15 @@ describe("FunnelProxy", () => {
 
       try {
         proxy.addRoute({
-          path: "/auth",
+          path: "/proxy/auth",
           target: `http://127.0.0.1:${targetPort}`,
           project: "auth",
         });
         await proxy.start();
 
-        // Simulate Vite requesting /@vite/client with Referer from /auth page
+        // Simulate Vite requesting /@vite/client with Referer from /proxy/auth page
         const res = await httpGet(`http://127.0.0.1:${proxyPort}/@vite/client`, {
-          referer: `http://127.0.0.1:${proxyPort}/auth`,
+          referer: `http://127.0.0.1:${proxyPort}/proxy/auth`,
         });
         expect(res.statusCode).toBe(200);
 
@@ -239,25 +272,25 @@ describe("FunnelProxy", () => {
 
       try {
         proxy.addRoute({
-          path: "/auth",
+          path: "/proxy/auth",
           target: `http://127.0.0.1:${targetPort}`,
           project: "auth",
         });
         await proxy.start();
 
-        // Step 1: Browser loads /auth → prefix match (populates cache for "/auth")
-        const page = await httpGet(`http://127.0.0.1:${proxyPort}/auth`);
+        // Step 1: Browser loads /proxy/auth → prefix match (populates cache for "/proxy/auth")
+        const page = await httpGet(`http://127.0.0.1:${proxyPort}/proxy/auth`);
         expect(page.statusCode).toBe(200);
 
-        // Step 2: HTML loads /src/main.jsx with Referer /auth → direct referer match
+        // Step 2: HTML loads /src/main.jsx with Referer /proxy/auth → direct referer match
         //         (populates cache for "/src/main.jsx")
         const mainJsx = await httpGet(`http://127.0.0.1:${proxyPort}/src/main.jsx`, {
-          referer: `http://127.0.0.1:${proxyPort}/auth`,
+          referer: `http://127.0.0.1:${proxyPort}/proxy/auth`,
         });
         expect(mainJsx.statusCode).toBe(200);
 
         // Step 3: main.jsx imports react.js with Referer /src/main.jsx
-        //         Referer "/src/main.jsx" does NOT start with "/auth" — needs cache lookup
+        //         Referer "/src/main.jsx" does NOT start with "/proxy/auth" — needs cache lookup
         const react = await httpGet(
           `http://127.0.0.1:${proxyPort}/node_modules/.vite/deps/react.js?v=5cd256f0`,
           {
@@ -281,20 +314,20 @@ describe("FunnelProxy", () => {
 
       try {
         proxy.addRoute({
-          path: "/auth",
+          path: "/proxy/auth",
           target: `http://127.0.0.1:${targetA}`,
           project: "auth",
         });
         proxy.addRoute({
-          path: "/admin",
+          path: "/proxy/admin",
           target: `http://127.0.0.1:${targetB}`,
           project: "admin",
         });
         await proxy.start();
 
-        // Request from /admin page — should route to admin target
+        // Request from /proxy/admin page — should route to admin target
         const res = await httpGet(`http://127.0.0.1:${proxyPort}/src/main.jsx`, {
-          referer: `http://127.0.0.1:${proxyPort}/admin/dashboard`,
+          referer: `http://127.0.0.1:${proxyPort}/proxy/admin/dashboard`,
         });
         expect(res.statusCode).toBe(200);
 

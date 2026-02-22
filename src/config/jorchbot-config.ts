@@ -81,6 +81,13 @@ export const SessionsSchema = z.object({
   contextGuard: ContextGuardSchema.default(ContextGuardSchema.parse({})),
 });
 
+const GuiSchema = z.object({
+  /** Expose GUI to the internet via Tailscale Funnel.
+   *  When false (default), only tailnet IPs (100.64.0.0/10) can access the GUI.
+   *  When true, device auth (ECDSA P-256) protects the GUI. */
+  funnel: z.boolean().default(false),
+});
+
 /**
  * Full JorchBot config schema.
  *
@@ -95,6 +102,7 @@ export const JorchBotConfigSchema = z.object({
   tunnels: TunnelsSchema.default(TunnelsSchema.parse({})),
   approvals: ApprovalsSchema.default(ApprovalsSchema.parse({})),
   sessions: SessionsSchema.default(SessionsSchema.parse({})),
+  gui: GuiSchema.default(GuiSchema.parse({})),
 });
 
 export type JorchBotConfig = z.infer<typeof JorchBotConfigSchema>;

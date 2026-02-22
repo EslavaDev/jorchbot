@@ -225,3 +225,58 @@ export class DocumentNotFoundError extends JorchBotError {
     super(`Document "${documentId}" not found or expired`);
   }
 }
+
+// --- GUI errors (Phase 6) ---
+
+/** WebSocket server failed to start or attach to HTTP server */
+export class WsServerStartError extends JorchBotError {
+  constructor(cause?: unknown) {
+    super("Failed to start WebSocket server", {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** WebSocket RPC method not found */
+export class WsMethodNotFoundError extends JorchBotError {
+  constructor(method: string) {
+    super(`Unknown RPC method: "${method}"`);
+  }
+}
+
+/** WebSocket RPC handler threw an error */
+export class WsRpcError extends JorchBotError {
+  constructor(method: string, cause?: unknown) {
+    super(`RPC handler for "${method}" failed`, {
+      cause: cause instanceof Error ? cause : undefined,
+    });
+  }
+}
+
+/** WebSocket connect handshake failed (auth, protocol, etc.) */
+export class WsConnectError extends JorchBotError {
+  constructor(reason: string) {
+    super(`WebSocket connect failed: ${reason}`);
+  }
+}
+
+/** GUI access denied (not on tailnet, no device auth) */
+export class GuiAccessDeniedError extends JorchBotError {
+  constructor(ip: string, reason: string) {
+    super(`GUI access denied for ${ip}: ${reason}`);
+  }
+}
+
+/** Device blocked (on blacklist) */
+export class DeviceBlockedError extends JorchBotError {
+  constructor(deviceId: string) {
+    super(`Device "${deviceId}" is blocked`);
+  }
+}
+
+/** /gui funnel toggle confirmation failed (wrong code, expired) */
+export class GuiFunnelConfirmationError extends JorchBotError {
+  constructor(reason: string) {
+    super(`Funnel toggle failed: ${reason}`);
+  }
+}

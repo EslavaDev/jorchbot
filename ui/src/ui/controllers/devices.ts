@@ -1,6 +1,7 @@
 import { clearDeviceAuthToken, storeDeviceAuthToken } from "../device-auth.ts";
 import { loadOrCreateDeviceIdentity } from "../device-identity.ts";
 import type { GatewayBrowserClient } from "../gateway.ts";
+import type { BlockedDevicesResult } from "../types.ts";
 
 export type DeviceTokenSummary = {
   role: string;
@@ -86,6 +87,24 @@ export async function approveDevicePairing(state: DevicesState, requestId: strin
   }
 }
 
+export async function removeDevice(state: DevicesState, deviceId: string) {
+  if (!state.client || !state.connected) {
+    return;
+  }
+  const confirmed = window.confirm(
+    `Remove paired device "${deviceId}"? This will revoke its access.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+  try {
+    await state.client.request("device.pair.remove", { deviceId });
+    await loadDevices(state);
+  } catch (err) {
+    state.devicesError = String(err);
+  }
+}
+
 export async function rejectDevicePairing(state: DevicesState, requestId: string) {
   if (!state.client || !state.connected) {
     return;
@@ -153,6 +172,62 @@ export async function revokeDeviceToken(
       clearDeviceAuthToken({ deviceId: identity.deviceId, role: params.role });
     }
     await loadDevices(state);
+  } catch (err) {
+    state.devicesError = String(err);
+  }
+}
+
+// --- Phase I: Blocked devices ---
+
+export type BlockedDevicesState = DevicesState & {
+  blockedDevicesLoading: boolean;
+  blockedDevicesResult: BlockedDevicesResult | null;
+};
+
+export async function loadBlockedDevices(state: BlockedDevicesState) {
+  if (!state.client || !state.connected) {
+    return;
+  }
+  state.blockedDevicesLoading = true;
+  try {
+    const res = await state.client.request<BlockedDevicesResult>("jb.devices.blocked", {});
+    state.blockedDevicesResult = res ?? { devices: [] };
+  } catch {
+    // Silently fail — blocked list is supplementary
+    state.blockedDevicesResult = { devices: [] };
+  } finally {
+    state.blockedDevicesLoading = false;
+  }
+}
+
+export async function blockDeviceFromUi(state: BlockedDevicesState, deviceId: string) {
+  if (!state.client || !state.connected) {
+    return;
+  }
+  const reason = window.prompt(`Block device "${deviceId}"? Enter a reason (optional):`);
+  if (reason === null) {
+    return; // User cancelled
+  }
+  try {
+    await state.client.request("jb.devices.block", { deviceId, reason: reason || undefined });
+    await loadBlockedDevices(state);
+    await loadDevices(state);
+  } catch (err) {
+    state.devicesError = String(err);
+  }
+}
+
+export async function unblockDeviceFromUi(state: BlockedDevicesState, deviceId: string) {
+  if (!state.client || !state.connected) {
+    return;
+  }
+  const confirmed = window.confirm(`Unblock device "${deviceId}"?`);
+  if (!confirmed) {
+    return;
+  }
+  try {
+    await state.client.request("jb.devices.unblock", { deviceId });
+    await loadBlockedDevices(state);
   } catch (err) {
     state.devicesError = String(err);
   }

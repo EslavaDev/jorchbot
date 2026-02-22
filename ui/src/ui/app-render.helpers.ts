@@ -1,4 +1,4 @@
-import { html } from "lit";
+import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { t } from "../i18n/index.ts";
 import { refreshChat } from "./app-chat.ts";
@@ -47,8 +47,17 @@ function resetChatStateForSessionSwitch(state: AppViewState, sessionKey: string)
   });
 }
 
+function resolveTabBadge(state: AppViewState, tab: Tab): number {
+  if (tab === "nodes") {
+    const pending = state.devicesList?.pending ?? [];
+    return pending.length;
+  }
+  return 0;
+}
+
 export function renderTab(state: AppViewState, tab: Tab) {
   const href = pathForTab(tab, state.basePath);
+  const badgeCount = resolveTabBadge(state, tab);
   return html`
     <a
       href=${href}
@@ -78,6 +87,7 @@ export function renderTab(state: AppViewState, tab: Tab) {
     >
       <span class="nav-item__icon" aria-hidden="true">${icons[iconForTab(tab)]}</span>
       <span class="nav-item__text">${titleForTab(tab)}</span>
+      ${badgeCount > 0 ? html`<span class="nav-item__badge">${badgeCount}</span>` : nothing}
     </a>
   `;
 }

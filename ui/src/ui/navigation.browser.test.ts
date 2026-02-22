@@ -24,25 +24,25 @@ describe("control UI routing", () => {
   });
 
   it("respects /ui base paths", async () => {
-    const app = mountApp("/ui/cron");
+    const app = mountApp("/ui/config");
     await app.updateComplete;
 
     expect(app.basePath).toBe("/ui");
-    expect(app.tab).toBe("cron");
-    expect(window.location.pathname).toBe("/ui/cron");
+    expect(app.tab).toBe("config");
+    expect(window.location.pathname).toBe("/ui/config");
   });
 
   it("infers nested base paths", async () => {
-    const app = mountApp("/apps/openclaw/cron");
+    const app = mountApp("/apps/openclaw/config");
     await app.updateComplete;
 
     expect(app.basePath).toBe("/apps/openclaw");
-    expect(app.tab).toBe("cron");
-    expect(window.location.pathname).toBe("/apps/openclaw/cron");
+    expect(app.tab).toBe("config");
+    expect(window.location.pathname).toBe("/apps/openclaw/config");
   });
 
   it("honors explicit base path overrides", async () => {
-    window.__OPENCLAW_CONTROL_UI_BASE_PATH__ = "/openclaw";
+    window.__JORCHBOT_CONTROL_UI_BASE_PATH__ = "/openclaw";
     const app = mountApp("/openclaw/sessions");
     await app.updateComplete;
 
@@ -52,7 +52,7 @@ describe("control UI routing", () => {
   });
 
   it("updates the URL when clicking nav items", async () => {
-    const app = mountApp("/chat");
+    const app = mountApp("/overview");
     await app.updateComplete;
 
     const link = app.querySelector<HTMLAnchorElement>('a.nav-item[href="/channels"]');
@@ -64,23 +64,20 @@ describe("control UI routing", () => {
     expect(window.location.pathname).toBe("/channels");
   });
 
-  it("resets to the main session when opening chat from sidebar navigation", async () => {
-    const app = mountApp("/sessions?session=agent:main:subagent:task-123");
+  it("redirects hidden tabs to overview", async () => {
+    const app = mountApp("/chat");
     await app.updateComplete;
 
-    const link = app.querySelector<HTMLAnchorElement>('a.nav-item[href="/chat"]');
-    expect(link).not.toBeNull();
-    link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-
-    await app.updateComplete;
-    expect(app.tab).toBe("chat");
-    expect(app.sessionKey).toBe("main");
-    expect(window.location.pathname).toBe("/chat");
-    expect(window.location.search).toBe("?session=main");
+    // "chat" is a hidden tab — should redirect to overview
+    expect(app.tab).toBe("overview");
+    expect(window.location.pathname).toBe("/overview");
   });
 
   it("keeps chat and nav usable on narrow viewports", async () => {
-    const app = mountApp("/chat");
+    // Force chat tab via setTab (chat is hidden from nav but still functional)
+    const app = mountApp("/overview");
+    await app.updateComplete;
+    app.setTab("chat");
     await app.updateComplete;
 
     expect(window.matchMedia("(max-width: 768px)").matches).toBe(true);
@@ -108,7 +105,10 @@ describe("control UI routing", () => {
   });
 
   it("auto-scrolls chat history to the latest message", async () => {
-    const app = mountApp("/chat");
+    // Force chat tab via setTab (chat is hidden from nav but still functional)
+    const app = mountApp("/overview");
+    await app.updateComplete;
+    app.setTab("chat");
     await app.updateComplete;
 
     const initialContainer: HTMLElement | null = app.querySelector(".chat-thread");
@@ -166,7 +166,7 @@ describe("control UI routing", () => {
 
   it("hydrates token from URL params even when settings already set", async () => {
     localStorage.setItem(
-      "openclaw.control.settings.v1",
+      "jorchbot.control.settings.v1",
       JSON.stringify({ token: "existing-token" }),
     );
     const app = mountApp("/ui/overview?token=abc123");

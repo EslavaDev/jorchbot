@@ -30,10 +30,13 @@ import {
 import { loadDebug, callDebugMethod } from "./controllers/debug.ts";
 import {
   approveDevicePairing,
+  blockDeviceFromUi,
   loadDevices,
   rejectDevicePairing,
+  removeDevice,
   revokeDeviceToken,
   rotateDeviceToken,
+  unblockDeviceFromUi,
 } from "./controllers/devices.ts";
 import {
   loadExecApprovals,
@@ -41,6 +44,7 @@ import {
   saveExecApprovals,
   updateExecApprovalsFormValue,
 } from "./controllers/exec-approvals.ts";
+import { reloadJorchfile, saveJorchfile, serializeJorchfile } from "./controllers/jorchfile.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
@@ -52,8 +56,23 @@ import {
   updateSkillEdit,
   updateSkillEnabled,
 } from "./controllers/skills.ts";
+import { loadTunnels, stopTunnel, addProxyRoute, removeProxyRoute } from "./controllers/tunnels.ts";
+import {
+  loadWorkspaces,
+  focusWorkspace,
+  compactWorkspace,
+  stopWorkspace,
+  restartWorkspace,
+  deleteWorkspace,
+  createWorkspace,
+} from "./controllers/workspaces.ts";
 import { icons } from "./icons.ts";
-import { normalizeBasePath, TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
+import {
+  normalizeBasePath,
+  VISIBLE_TAB_GROUPS,
+  subtitleForTab,
+  titleForTab,
+} from "./navigation.ts";
 import { renderAgents } from "./views/agents.ts";
 import { renderChannels } from "./views/channels.ts";
 import { renderChat } from "./views/chat.ts";
@@ -63,6 +82,9 @@ import { renderDebug } from "./views/debug.ts";
 import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
 import { renderInstances } from "./views/instances.ts";
+import { renderJorchfile } from "./views/jb-jorchfile.ts";
+import { renderTunnels } from "./views/jb-tunnels.ts";
+import { renderWorkspaces } from "./views/jb-workspaces.ts";
 import { renderLogs } from "./views/logs.ts";
 import { renderNodes } from "./views/nodes.ts";
 import { renderOverview } from "./views/overview.ts";
@@ -125,11 +147,11 @@ export function renderApp(state: AppViewState) {
           </button>
           <div class="brand">
             <div class="brand-logo">
-              <img src=${basePath ? `${basePath}/favicon.svg` : "/favicon.svg"} alt="OpenClaw" />
+              <img src=${basePath ? `${basePath}/favicon.svg` : "/favicon.svg"} alt="JorchBot" />
             </div>
             <div class="brand-text">
-              <div class="brand-title">OPENCLAW</div>
-              <div class="brand-sub">Gateway Dashboard</div>
+              <div class="brand-title">JORCHBOT</div>
+              <div class="brand-sub">Remote Dev</div>
             </div>
           </div>
         </div>
@@ -143,7 +165,7 @@ export function renderApp(state: AppViewState) {
         </div>
       </header>
       <aside class="nav ${state.settings.navCollapsed ? "nav--collapsed" : ""}">
-        ${TAB_GROUPS.map((group) => {
+        ${VISIBLE_TAB_GROUPS.map((group) => {
           const isGroupCollapsed = state.settings.navGroupsCollapsed[group.label] ?? false;
           const hasActiveTab = group.tabs.some((tab) => tab === state.tab);
           return html`
@@ -176,7 +198,7 @@ export function renderApp(state: AppViewState) {
           <div class="nav-group__items">
             <a
               class="nav-item nav-item--external"
-              href="https://docs.openclaw.ai"
+              href="https://github.com/EslavaDev/jorchbot"
               target="_blank"
               rel="noreferrer"
               title="${t("common.docs")} (opens in new tab)"
@@ -240,6 +262,141 @@ export function renderApp(state: AppViewState) {
                 },
                 onConnect: () => state.connect(),
                 onRefresh: () => state.loadOverview(),
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "workspaces"
+            ? renderWorkspaces({
+                loading: state.workspacesLoading,
+                result: state.workspacesResult,
+                error: state.workspacesError,
+                onRefresh: () => loadWorkspaces(state),
+                onFocus: (project) => focusWorkspace(state, project),
+                onCompact: (project) => compactWorkspace(state, project),
+                onStop: (project) => stopWorkspace(state, project),
+                onRestart: (project) => restartWorkspace(state, project),
+                onDelete: (project) => deleteWorkspace(state, project),
+                onCreate: (input) => createWorkspace(state, input),
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "tunnels"
+            ? renderTunnels({
+                loading: state.tunnelsLoading,
+                tunnelsResult: state.tunnelsResult,
+                proxyRoutesResult: state.proxyRoutesResult,
+                proxyStatusResult: state.proxyStatusResult,
+                error: state.tunnelsError,
+                onRefresh: () => loadTunnels(state),
+                onStop: (tunnelId) => stopTunnel(state, tunnelId),
+                onAddRoute: (path, target) => addProxyRoute(state, path, target),
+                onRemoveRoute: (path) => removeProxyRoute(state, path),
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "jorchfile"
+            ? renderJorchfile({
+                loading: state.jorchfileLoading,
+                jorchfile: state.jorchfileResult,
+                error: state.jorchfileError,
+                dirty: state.jorchfileDirty,
+                textMode: state.jorchfileTextMode,
+                rawContent: state.jorchfileRaw,
+                onRefresh: () => reloadJorchfile(state),
+                onSave: () => {
+                  if (state.jorchfileTextMode) {
+                    void saveJorchfile(state, state.jorchfileRaw);
+                  } else if (state.jorchfileResult) {
+                    void saveJorchfile(state, serializeJorchfile(state.jorchfileResult));
+                  }
+                },
+                onToggleMode: () => {
+                  if (!state.jorchfileTextMode && state.jorchfileResult) {
+                    state.jorchfileRaw = serializeJorchfile(state.jorchfileResult);
+                  }
+                  state.jorchfileTextMode = !state.jorchfileTextMode;
+                },
+                onRawChange: (content) => {
+                  state.jorchfileRaw = content;
+                  state.jorchfileDirty = true;
+                },
+                onAddProject: () => {
+                  const name = prompt("Project name:");
+                  if (!name) {
+                    return;
+                  }
+                  const trimmed = name.trim();
+                  if (!trimmed) {
+                    return;
+                  }
+                  const projects = state.jorchfileResult?.projects ?? [];
+                  if (projects.some((p) => p.name === trimmed)) {
+                    return;
+                  }
+                  state.jorchfileResult = {
+                    projects: [...projects, { name: trimmed, path: "", commands: {} }],
+                    settings: state.jorchfileResult?.settings ?? {},
+                  };
+                  state.jorchfileDirty = true;
+                },
+                onRemoveProject: (projectName) => {
+                  if (!state.jorchfileResult) {
+                    return;
+                  }
+                  state.jorchfileResult = {
+                    ...state.jorchfileResult,
+                    projects: state.jorchfileResult.projects.filter((p) => p.name !== projectName),
+                  };
+                  state.jorchfileDirty = true;
+                },
+                onProjectFieldChange: (projectName, field, value) => {
+                  if (!state.jorchfileResult) {
+                    return;
+                  }
+                  state.jorchfileResult = {
+                    ...state.jorchfileResult,
+                    projects: state.jorchfileResult.projects.map((p) =>
+                      p.name === projectName ? { ...p, [field]: value } : p,
+                    ),
+                  };
+                  state.jorchfileDirty = true;
+                },
+                onAddCommand: (projectName, cmdName, cmdValue) => {
+                  if (!state.jorchfileResult) {
+                    return;
+                  }
+                  state.jorchfileResult = {
+                    ...state.jorchfileResult,
+                    projects: state.jorchfileResult.projects.map((p) =>
+                      p.name === projectName
+                        ? { ...p, commands: { ...p.commands, [cmdName]: cmdValue } }
+                        : p,
+                    ),
+                  };
+                  state.jorchfileDirty = true;
+                },
+                onRemoveCommand: (projectName, cmdName) => {
+                  if (!state.jorchfileResult) {
+                    return;
+                  }
+                  state.jorchfileResult = {
+                    ...state.jorchfileResult,
+                    projects: state.jorchfileResult.projects.map((p) => {
+                      if (p.name !== projectName) {
+                        return p;
+                      }
+                      const { [cmdName]: _, ...rest } = p.commands;
+                      return { ...p, commands: rest };
+                    }),
+                  };
+                  state.jorchfileDirty = true;
+                },
               })
             : nothing
         }
@@ -725,6 +882,8 @@ export function renderApp(state: AppViewState) {
                 devicesLoading: state.devicesLoading,
                 devicesError: state.devicesError,
                 devicesList: state.devicesList,
+                blockedDevices: state.blockedDevicesResult?.devices ?? [],
+                blockedDevicesLoading: state.blockedDevicesLoading,
                 configForm:
                   state.configForm ??
                   (state.configSnapshot?.config as Record<string, unknown> | null),
@@ -747,6 +906,9 @@ export function renderApp(state: AppViewState) {
                 onDeviceRotate: (deviceId, role, scopes) =>
                   rotateDeviceToken(state, { deviceId, role, scopes }),
                 onDeviceRevoke: (deviceId, role) => revokeDeviceToken(state, { deviceId, role }),
+                onDeviceRemove: (deviceId) => removeDevice(state, deviceId),
+                onDeviceBlock: (deviceId) => blockDeviceFromUi(state, deviceId),
+                onDeviceUnblock: (deviceId) => unblockDeviceFromUi(state, deviceId),
                 onLoadConfig: () => loadConfig(state),
                 onLoadExecApprovals: () => {
                   const target =

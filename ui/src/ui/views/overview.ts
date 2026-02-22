@@ -2,7 +2,6 @@ import { html } from "lit";
 import { t, i18n, type Locale } from "../../i18n/index.ts";
 import { formatRelativeTimestamp, formatDurationHuman } from "../format.ts";
 import type { GatewayHelloOk } from "../gateway.ts";
-import { formatNextRun } from "../presenter.ts";
 import type { UiSettings } from "../storage.ts";
 
 export type OverviewProps = {
@@ -54,13 +53,13 @@ export function renderOverview(props: OverviewProps) {
         <div class="muted" style="margin-top: 8px">
           ${t("overview.auth.required")}
           <div style="margin-top: 6px">
-            <span class="mono">openclaw dashboard --no-open</span> → tokenized URL<br />
-            <span class="mono">openclaw doctor --generate-gateway-token</span> → set token
+            <span class="mono">jorchbot dashboard --no-open</span> → tokenized URL<br />
+            <span class="mono">jorchbot doctor --generate-gateway-token</span> → set token
           </div>
           <div style="margin-top: 6px">
             <a
               class="session-link"
-              href="https://docs.openclaw.ai/web/dashboard"
+              href="https://github.com/EslavaDev/jorchbot"
               target="_blank"
               rel="noreferrer"
               title="Control UI auth docs (opens in new tab)"
@@ -72,11 +71,11 @@ export function renderOverview(props: OverviewProps) {
     }
     return html`
       <div class="muted" style="margin-top: 8px">
-        ${t("overview.auth.failed", { command: "openclaw dashboard --no-open" })}
+        ${t("overview.auth.failed", { command: "jorchbot dashboard --no-open" })}
         <div style="margin-top: 6px">
           <a
             class="session-link"
-            href="https://docs.openclaw.ai/web/dashboard"
+            href="https://github.com/EslavaDev/jorchbot"
             target="_blank"
             rel="noreferrer"
             title="Control UI auth docs (opens in new tab)"
@@ -108,7 +107,7 @@ export function renderOverview(props: OverviewProps) {
         <div style="margin-top: 6px">
           <a
             class="session-link"
-            href="https://docs.openclaw.ai/gateway/tailscale"
+            href="https://github.com/EslavaDev/jorchbot"
             target="_blank"
             rel="noreferrer"
             title="Tailscale Serve docs (opens in new tab)"
@@ -117,7 +116,7 @@ export function renderOverview(props: OverviewProps) {
           <span class="muted"> · </span>
           <a
             class="session-link"
-            href="https://docs.openclaw.ai/web/control-ui#insecure-http"
+            href="https://github.com/EslavaDev/jorchbot"
             target="_blank"
             rel="noreferrer"
             title="Insecure HTTP docs (opens in new tab)"
@@ -159,7 +158,7 @@ export function renderOverview(props: OverviewProps) {
                       const v = (e.target as HTMLInputElement).value;
                       props.onSettingsChange({ ...props.settings, token: v });
                     }}
-                    placeholder="OPENCLAW_GATEWAY_TOKEN"
+                    placeholder="JORCHBOT_GATEWAY_TOKEN"
                   />
                 </label>
                 <label class="field">
@@ -255,21 +254,21 @@ export function renderOverview(props: OverviewProps) {
 
     <section class="grid grid-cols-3" style="margin-top: 18px;">
       <div class="card stat-card">
-        <div class="stat-label">${t("overview.stats.instances")}</div>
-        <div class="stat-value">${props.presenceCount}</div>
-        <div class="muted">${t("overview.stats.instancesHint")}</div>
-      </div>
-      <div class="card stat-card">
-        <div class="stat-label">${t("overview.stats.sessions")}</div>
+        <div class="stat-label">Workspaces</div>
         <div class="stat-value">${props.sessionsCount ?? t("common.na")}</div>
-        <div class="muted">${t("overview.stats.sessionsHint")}</div>
+        <div class="muted">Active Claude Code sessions</div>
       </div>
       <div class="card stat-card">
-        <div class="stat-label">${t("overview.stats.cron")}</div>
+        <div class="stat-label">${t("overview.snapshot.uptime")}</div>
+        <div class="stat-value">${uptime}</div>
+        <div class="muted">Gateway uptime</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Channels</div>
         <div class="stat-value">
-          ${props.cronEnabled == null ? t("common.na") : props.cronEnabled ? t("common.enabled") : t("common.disabled")}
+          ${props.lastChannelsRefresh ? t("common.ok") : t("common.na")}
         </div>
-        <div class="muted">${t("overview.stats.cronNext", { time: formatNextRun(props.cronNext) })}</div>
+        <div class="muted">WhatsApp / Telegram</div>
       </div>
     </section>
 
@@ -284,12 +283,12 @@ export function renderOverview(props: OverviewProps) {
           </div>
         </div>
         <div>
-          <div class="note-title">${t("overview.notes.sessionTitle")}</div>
-          <div class="muted">${t("overview.notes.sessionText")}</div>
+          <div class="note-title">Workspaces</div>
+          <div class="muted">Manage Claude Code sessions from the Workspaces tab. Each workspace runs a headless Claude Code instance.</div>
         </div>
         <div>
-          <div class="note-title">${t("overview.notes.cronTitle")}</div>
-          <div class="muted">${t("overview.notes.cronText")}</div>
+          <div class="note-title">Tunnels</div>
+          <div class="muted">Expose local ports via Tailscale Serve (private) or Funnel (public). Manage from the Tunnels tab.</div>
         </div>
       </div>
     </section>

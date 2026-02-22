@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { EventEmitter } from "node:events";
 import { TunnelNotFoundError } from "../errors/index.js";
 import type { TailscaleFunnelAdapter } from "./adapters/tailscale-funnel.js";
 import type { TailscaleServeAdapter } from "./adapters/tailscale-serve.js";
@@ -36,7 +37,7 @@ export class TunnelPendingConfirmation {
   }
 }
 
-export class TunnelManager {
+export class TunnelManager extends EventEmitter {
   private deps: TunnelManagerDeps;
   /** In-memory cache of active tunnels, keyed by tunnel ID */
   private activeTunnels = new Map<string, TunnelInfo>();
@@ -44,6 +45,7 @@ export class TunnelManager {
   private pendingConfirmations = new Map<string, TunnelStartInput>();
 
   constructor(deps: TunnelManagerDeps) {
+    super();
     this.deps = deps;
   }
 
@@ -176,6 +178,11 @@ export class TunnelManager {
     );
   }
 
+  /** Get the FunnelProxy instance for direct route management (GUI) */
+  getFunnelProxy(): FunnelProxy {
+    return this.deps.funnelProxy;
+  }
+
   /** Get health report for all active tunnels */
   async health(): Promise<TunnelHealthReport> {
     return this.deps.healthMonitor.checkAll(this.list());
@@ -264,7 +271,9 @@ export class TunnelManager {
 
     this.activeTunnels.set(id, info);
     this.deps.db.insert(info);
-    this.deps.callbacks.onNotify({ type: "tunnel:started", tunnel: info });
+    const startEvent = { type: "tunnel:started" as const, tunnel: info };
+    this.deps.callbacks.onNotify(startEvent);
+    this.emit("tunnelEvent", startEvent);
 
     return info;
   }
@@ -318,7 +327,9 @@ export class TunnelManager {
     this.activeTunnels.set(tunnelId, info);
     this.deps.db.insert(info, funnelPath);
     this.deps.healthMonitor.start(this);
-    this.deps.callbacks.onNotify({ type: "tunnel:started", tunnel: info });
+    const funnelStartEvent = { type: "tunnel:started" as const, tunnel: info };
+    this.deps.callbacks.onNotify(funnelStartEvent);
+    this.emit("tunnelEvent", funnelStartEvent);
 
     return info;
   }
@@ -345,11 +356,13 @@ export class TunnelManager {
 
     this.activeTunnels.delete(tunnel.id);
     this.deps.db.updateStatus(tunnel.id, "stopped");
-    this.deps.callbacks.onNotify({
-      type: "tunnel:stopped",
+    const stopEvent = {
+      type: "tunnel:stopped" as const,
       tunnelId: tunnel.id,
       project: tunnel.project,
-    });
+    };
+    this.deps.callbacks.onNotify(stopEvent);
+    this.emit("tunnelEvent", stopEvent);
 
     // Stop health monitor if no more active tunnels
     if (this.activeTunnels.size === 0) {

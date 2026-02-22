@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   TAB_GROUPS,
+  VISIBLE_TAB_GROUPS,
   iconForTab,
   inferBasePathFromPathname,
+  isHiddenTab,
   normalizeBasePath,
   normalizePath,
   pathForTab,
@@ -12,8 +14,13 @@ import {
   type Tab,
 } from "./navigation.ts";
 
-/** All valid tab identifiers derived from TAB_GROUPS */
-const ALL_TABS: Tab[] = TAB_GROUPS.flatMap((group) => group.tabs) as Tab[];
+/** All valid tab identifiers derived from TAB_GROUPS + JorchBot additions */
+const ALL_TABS: Tab[] = [
+  ...(TAB_GROUPS.flatMap((group) => group.tabs) as Tab[]),
+  "workspaces",
+  "tunnels",
+  "jorchfile",
+];
 
 describe("iconForTab", () => {
   it("returns a non-empty string for every tab", () => {
@@ -37,6 +44,9 @@ describe("iconForTab", () => {
     expect(iconForTab("config")).toBe("settings");
     expect(iconForTab("debug")).toBe("bug");
     expect(iconForTab("logs")).toBe("scrollText");
+    expect(iconForTab("workspaces")).toBe("folder");
+    expect(iconForTab("tunnels")).toBe("link");
+    expect(iconForTab("jorchfile")).toBe("fileText");
   });
 
   it("returns a fallback icon for unknown tab", () => {
@@ -60,6 +70,13 @@ describe("titleForTab", () => {
     expect(titleForTab("overview")).toBe("Overview");
     expect(titleForTab("cron")).toBe("Cron Jobs");
   });
+
+  it("returns JorchBot overrides for renamed/new tabs", () => {
+    expect(titleForTab("nodes")).toBe("Devices");
+    expect(titleForTab("workspaces")).toBe("Workspaces");
+    expect(titleForTab("tunnels")).toBe("Tunnels");
+    expect(titleForTab("jorchfile")).toBe("Jorchfile");
+  });
 });
 
 describe("subtitleForTab", () => {
@@ -72,7 +89,7 @@ describe("subtitleForTab", () => {
 
   it("returns descriptive subtitles", () => {
     expect(subtitleForTab("chat")).toContain("chat session");
-    expect(subtitleForTab("config")).toContain("openclaw.json");
+    expect(subtitleForTab("config")).toContain("jorchbot");
   });
 });
 
@@ -117,6 +134,9 @@ describe("pathForTab", () => {
   it("returns correct path without base", () => {
     expect(pathForTab("chat")).toBe("/chat");
     expect(pathForTab("overview")).toBe("/overview");
+    expect(pathForTab("workspaces")).toBe("/workspaces");
+    expect(pathForTab("tunnels")).toBe("/tunnels");
+    expect(pathForTab("jorchfile")).toBe("/jorchfile");
   });
 
   it("prepends base path", () => {
@@ -132,8 +152,14 @@ describe("tabFromPath", () => {
     expect(tabFromPath("/sessions")).toBe("sessions");
   });
 
-  it("returns chat for root path", () => {
-    expect(tabFromPath("/")).toBe("chat");
+  it("returns overview for root path", () => {
+    expect(tabFromPath("/")).toBe("overview");
+  });
+
+  it("resolves new JorchBot tab paths", () => {
+    expect(tabFromPath("/workspaces")).toBe("workspaces");
+    expect(tabFromPath("/tunnels")).toBe("tunnels");
+    expect(tabFromPath("/jorchfile")).toBe("jorchfile");
   });
 
   it("handles base paths", () => {
@@ -175,15 +201,78 @@ describe("inferBasePathFromPathname", () => {
 describe("TAB_GROUPS", () => {
   it("contains all expected groups", () => {
     const labels = TAB_GROUPS.map((g) => g.label);
-    expect(labels).toContain("Chat");
-    expect(labels).toContain("Control");
-    expect(labels).toContain("Agent");
-    expect(labels).toContain("Settings");
+    expect(labels).toContain("chat");
+    expect(labels).toContain("control");
+    expect(labels).toContain("agent");
+    expect(labels).toContain("settings");
   });
 
   it("all tabs are unique", () => {
     const allTabs = TAB_GROUPS.flatMap((g) => g.tabs);
     const uniqueTabs = new Set(allTabs);
     expect(uniqueTabs.size).toBe(allTabs.length);
+  });
+});
+
+describe("VISIBLE_TAB_GROUPS", () => {
+  it("contains 4 JorchBot groups", () => {
+    const labels = VISIBLE_TAB_GROUPS.map((g) => g.label);
+    expect(labels).toEqual(["jorchbot", "infrastructure", "configuration", "system"]);
+  });
+
+  it("shows only visible tabs (hidden tabs filtered out)", () => {
+    const allVisibleTabs = VISIBLE_TAB_GROUPS.flatMap((g) => g.tabs);
+    expect(allVisibleTabs).toContain("overview");
+    expect(allVisibleTabs).toContain("workspaces");
+    expect(allVisibleTabs).toContain("sessions");
+    expect(allVisibleTabs).toContain("tunnels");
+    expect(allVisibleTabs).toContain("channels");
+    expect(allVisibleTabs).toContain("jorchfile");
+    expect(allVisibleTabs).toContain("config");
+    expect(allVisibleTabs).toContain("nodes");
+    expect(allVisibleTabs).toContain("debug");
+    expect(allVisibleTabs).toContain("logs");
+    // Hidden tabs not included
+    expect(allVisibleTabs).not.toContain("chat");
+    expect(allVisibleTabs).not.toContain("instances");
+    expect(allVisibleTabs).not.toContain("usage");
+    expect(allVisibleTabs).not.toContain("cron");
+    expect(allVisibleTabs).not.toContain("agents");
+    expect(allVisibleTabs).not.toContain("skills");
+  });
+
+  it("has 10 visible tabs across 4 groups", () => {
+    const allVisibleTabs = VISIBLE_TAB_GROUPS.flatMap((g) => g.tabs);
+    expect(allVisibleTabs).toHaveLength(10);
+  });
+
+  it("all visible tabs are unique", () => {
+    const allVisibleTabs = VISIBLE_TAB_GROUPS.flatMap((g) => g.tabs);
+    const uniqueTabs = new Set(allVisibleTabs);
+    expect(uniqueTabs.size).toBe(allVisibleTabs.length);
+  });
+});
+
+describe("isHiddenTab", () => {
+  it("returns true for hidden tabs", () => {
+    expect(isHiddenTab("chat")).toBe(true);
+    expect(isHiddenTab("instances")).toBe(true);
+    expect(isHiddenTab("usage")).toBe(true);
+    expect(isHiddenTab("cron")).toBe(true);
+    expect(isHiddenTab("agents")).toBe(true);
+    expect(isHiddenTab("skills")).toBe(true);
+  });
+
+  it("returns false for visible tabs", () => {
+    expect(isHiddenTab("overview")).toBe(false);
+    expect(isHiddenTab("workspaces")).toBe(false);
+    expect(isHiddenTab("sessions")).toBe(false);
+    expect(isHiddenTab("tunnels")).toBe(false);
+    expect(isHiddenTab("channels")).toBe(false);
+    expect(isHiddenTab("jorchfile")).toBe(false);
+    expect(isHiddenTab("config")).toBe(false);
+    expect(isHiddenTab("nodes")).toBe(false);
+    expect(isHiddenTab("debug")).toBe(false);
+    expect(isHiddenTab("logs")).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import type {
   AgentsListResult,
   AgentsFilesListResult,
   AgentIdentityResult,
+  BlockedDevicesResult,
   ChannelsStatusSnapshot,
   ConfigSnapshot,
   ConfigUiHints,
@@ -20,6 +21,7 @@ import type {
   CronRunLogEntry,
   CronStatus,
   HealthSnapshot,
+  JorchfileView,
   LogEntry,
   LogLevel,
   NostrProfile,
@@ -30,6 +32,10 @@ import type {
   SessionsListResult,
   SkillStatusReport,
   StatusSummary,
+  WorkspacesListResult,
+  TunnelsListResult,
+  ProxyRoutesListResult,
+  ProxyStatusResult,
 } from "./types.ts";
 import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types.ts";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
@@ -88,6 +94,8 @@ export type AppViewState = {
   execApprovalQueue: ExecApprovalRequest[];
   execApprovalBusy: boolean;
   execApprovalError: string | null;
+  blockedDevicesLoading: boolean;
+  blockedDevicesResult: BlockedDevicesResult | null;
   pendingGatewayUrl: string | null;
   configLoading: boolean;
   configRaw: string;
@@ -143,6 +151,20 @@ export type AppViewState = {
   agentSkillsError: string | null;
   agentSkillsReport: SkillStatusReport | null;
   agentSkillsAgentId: string | null;
+  workspacesLoading: boolean;
+  workspacesResult: WorkspacesListResult | null;
+  workspacesError: string | null;
+  tunnelsLoading: boolean;
+  tunnelsResult: TunnelsListResult | null;
+  tunnelsError: string | null;
+  proxyRoutesResult: ProxyRoutesListResult | null;
+  proxyStatusResult: ProxyStatusResult | null;
+  jorchfileLoading: boolean;
+  jorchfileResult: JorchfileView | null;
+  jorchfileError: string | null;
+  jorchfileRaw: string;
+  jorchfileDirty: boolean;
+  jorchfileTextMode: boolean;
   sessionsLoading: boolean;
   sessionsResult: SessionsListResult | null;
   sessionsError: string | null;

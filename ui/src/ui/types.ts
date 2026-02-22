@@ -412,6 +412,111 @@ export type SessionsListResult = {
   sessions: GatewaySessionRow[];
 };
 
+// --- Phase G: Workspace types for GUI ---
+
+export type WorkspaceCommand = {
+  name: string;
+  command: string;
+  description?: string;
+};
+
+export type WorkspaceView = {
+  id: string;
+  name: string;
+  path: string;
+  systemPrompt?: string;
+  allowedTools?: string[];
+  mode: "confirm" | "plan" | "auto";
+  outputMode: "verbose" | "summary" | "silent";
+  enabled: boolean;
+  focused: boolean;
+  contextPercent: number;
+  status: "running" | "stopped" | "error" | "paused";
+  lastMessage?: string;
+  lastMessageAt?: number;
+  commands: WorkspaceCommand[];
+};
+
+export type WorkspacesListResult = {
+  ts: number;
+  workspaces: WorkspaceView[];
+};
+
+// --- Phase H: Tunnel types for GUI ---
+
+export type TunnelView = {
+  id: string;
+  project: string;
+  localPort: number;
+  assignedPort: number;
+  url: string;
+  provider: string;
+  mode: string;
+  status: string;
+  createdAt: number;
+};
+
+export type TunnelsListResult = {
+  tunnels: TunnelView[];
+};
+
+export type ProxyRouteView = {
+  path: string;
+  target: string;
+  project: string;
+};
+
+export type ProxyRoutesListResult = {
+  routes: ProxyRouteView[];
+};
+
+export type ProxyStatusResult = {
+  running: boolean;
+  port: number;
+  routeCount: number;
+};
+
+// --- Phase J: Jorchfile types for GUI ---
+
+export type JorchfileProjectView = {
+  name: string;
+  path: string;
+  commands: Record<string, string>;
+  instructions?: string;
+  approve?: "confirm" | "plan" | "auto";
+  output?: "verbose" | "summary" | "silent";
+  port?: number;
+  tunnel?: string;
+};
+
+export type JorchfileSettings = {
+  logRetentionDays?: number;
+  summaryRetentionDays?: number;
+  errorRetentionDays?: number;
+  dbMaxSizeMb?: number;
+};
+
+export type JorchfileView = {
+  projects: JorchfileProjectView[];
+  settings: JorchfileSettings;
+};
+
+export type JorchfileGetResult = {
+  jorchfile: JorchfileView | null;
+};
+
+// --- Phase I: Device blacklist types for GUI ---
+
+export type BlockedDevice = {
+  deviceId: string;
+  reason: string | null;
+  blockedAt: number | null;
+};
+
+export type BlockedDevicesResult = {
+  devices: BlockedDevice[];
+};
+
 export type SessionsPatchResult = {
   ok: true;
   path: string;

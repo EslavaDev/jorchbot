@@ -22,6 +22,13 @@
       "when": 1771612311248,
       "tag": "0002_wise_darkstar",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1771720031816,
+      "tag": "0003_quiet_mephistopheles",
+      "breakpoints": true
     }
   ]
 }

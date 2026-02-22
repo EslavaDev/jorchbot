@@ -14,15 +14,18 @@ import { loadChannels } from "./controllers/channels.ts";
 import { loadConfig, loadConfigSchema } from "./controllers/config.ts";
 import { loadCronJobs, loadCronStatus } from "./controllers/cron.ts";
 import { loadDebug } from "./controllers/debug.ts";
-import { loadDevices } from "./controllers/devices.ts";
+import { loadBlockedDevices, loadDevices } from "./controllers/devices.ts";
 import { loadExecApprovals } from "./controllers/exec-approvals.ts";
+import { loadJorchfile } from "./controllers/jorchfile.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import { loadSkills } from "./controllers/skills.ts";
+import { loadWorkspaces } from "./controllers/workspaces.ts";
 import {
   inferBasePathFromPathname,
+  isHiddenTab,
   normalizeBasePath,
   normalizePath,
   pathForTab,
@@ -188,6 +191,9 @@ export async function refreshActiveTab(host: SettingsHost) {
   if (host.tab === "instances") {
     await loadPresence(host as unknown as OpenClawApp);
   }
+  if (host.tab === "workspaces") {
+    await loadWorkspaces(host as unknown as OpenClawApp);
+  }
   if (host.tab === "sessions") {
     await loadSessions(host as unknown as OpenClawApp);
   }
@@ -219,9 +225,13 @@ export async function refreshActiveTab(host: SettingsHost) {
       }
     }
   }
+  if (host.tab === "jorchfile") {
+    await loadJorchfile(host as unknown as OpenClawApp);
+  }
   if (host.tab === "nodes") {
     await loadNodes(host as unknown as OpenClawApp);
     await loadDevices(host as unknown as OpenClawApp);
+    await loadBlockedDevices(host as unknown as OpenClawApp);
     await loadConfig(host as unknown as OpenClawApp);
     await loadExecApprovals(host as unknown as OpenClawApp);
   }
@@ -251,7 +261,8 @@ export function inferBasePath() {
   if (typeof window === "undefined") {
     return "";
   }
-  const configured = window.__OPENCLAW_CONTROL_UI_BASE_PATH__;
+  const configured =
+    window.__JORCHBOT_CONTROL_UI_BASE_PATH__ ?? window.__OPENCLAW_CONTROL_UI_BASE_PATH__;
   if (typeof configured === "string" && configured.trim()) {
     return normalizeBasePath(configured);
   }
@@ -314,7 +325,11 @@ export function syncTabWithLocation(host: SettingsHost, replace: boolean) {
   if (typeof window === "undefined") {
     return;
   }
-  const resolved = tabFromPath(window.location.pathname, host.basePath) ?? "chat";
+  let resolved = tabFromPath(window.location.pathname, host.basePath) ?? "overview";
+  // Redirect hidden tabs to overview
+  if (isHiddenTab(resolved)) {
+    resolved = "overview";
+  }
   setTabFromRoute(host, resolved);
   syncUrlWithTab(host, resolved, replace);
 }
@@ -323,9 +338,14 @@ export function onPopState(host: SettingsHost) {
   if (typeof window === "undefined") {
     return;
   }
-  const resolved = tabFromPath(window.location.pathname, host.basePath);
+  let resolved = tabFromPath(window.location.pathname, host.basePath);
   if (!resolved) {
     return;
+  }
+  // Redirect hidden tabs to overview
+  if (isHiddenTab(resolved)) {
+    resolved = "overview";
+    syncUrlWithTab(host, resolved, true);
   }
 
   const url = new URL(window.location.href);

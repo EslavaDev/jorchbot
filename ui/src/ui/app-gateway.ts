@@ -65,6 +65,8 @@ type GatewayHost = {
   execApprovalQueue: ExecApprovalRequest[];
   execApprovalError: string | null;
   updateAvailable: UpdateAvailable | null;
+  workspacesResult: import("./types.js").WorkspacesListResult | null;
+  tunnelsResult: import("./types.js").TunnelsListResult | null;
 };
 
 type SessionDefaultsSnapshot = {
@@ -138,7 +140,7 @@ export function connectGateway(host: GatewayHost) {
     url: host.settings.gatewayUrl,
     token: host.settings.token.trim() ? host.settings.token : undefined,
     password: host.password.trim() ? host.password : undefined,
-    clientName: "openclaw-control-ui",
+    clientName: "jorchbot-control-ui",
     mode: "webchat",
     onHello: (hello) => {
       if (host.client !== client) {
@@ -258,7 +260,11 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     void loadCron(host as unknown as Parameters<typeof loadCron>[0]);
   }
 
-  if (evt.event === "device.pair.requested" || evt.event === "device.pair.resolved") {
+  if (
+    evt.event === "device.pair.requested" ||
+    evt.event === "device.pair.resolved" ||
+    evt.event === "jb.device.paired"
+  ) {
     void loadDevices(host as unknown as OpenClawApp, { quiet: true });
   }
 
@@ -286,6 +292,38 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   if (evt.event === GATEWAY_EVENT_UPDATE_AVAILABLE) {
     const payload = evt.payload as GatewayUpdateAvailableEventPayload | undefined;
     host.updateAvailable = payload?.updateAvailable ?? null;
+  }
+
+  // Phase H: Refresh tunnels on tunnel state events
+  if (evt.event === "jb.tunnel.state" || evt.event === "jb.proxy.state") {
+    // Invalidate cached tunnel data — UI will re-fetch on next view
+    if (host.tunnelsResult) {
+      // Trigger a lightweight re-render to show stale indicator
+      host.tunnelsResult = { ...host.tunnelsResult };
+    }
+  }
+
+  // Phase G: Update workspace state in real-time from session events
+  if (evt.event === "jb.session.state") {
+    const payload = evt.payload as
+      | { project?: string; contextPercent?: number; status?: string; focused?: boolean }
+      | undefined;
+    if (payload?.project && host.workspacesResult) {
+      const ws = host.workspacesResult.workspaces.find((w) => w.name === payload.project);
+      if (ws) {
+        if (payload.contextPercent !== undefined) {
+          ws.contextPercent = payload.contextPercent;
+        }
+        if (payload.status !== undefined) {
+          ws.status = payload.status as typeof ws.status;
+        }
+        if (payload.focused !== undefined) {
+          ws.focused = payload.focused;
+        }
+        // Trigger re-render by creating a new result reference
+        host.workspacesResult = { ...host.workspacesResult };
+      }
+    }
   }
 }
 
