@@ -1,8 +1,8 @@
 # Future: Abstract Agent Runner Interface
 
-> **Status**: Planning (not yet scheduled)
-> **Target phase**: Phase 8 (Security + Multi-LLM)
-> **Related**: Phase 2 (ClaudeRunner), Phase 3 (Jorchfile/Skills), research.md section 17
+> **Status**: Scheduled → [Phase 10 — AgentRunner Abstraction](./phase-10-agent-runner.md)
+> **Target phase**: Phase 10 (AgentRunner Abstraction)
+> **Related**: Phase 2 (ClaudeRunner), Phase 3 (Jorchfile/Skills), Phase 8 (Security), research.md section 17
 
 ---
 

@@ -82,6 +82,10 @@ export function renderTab(state: AppViewState, tab: Tab) {
           }
         }
         state.setTab(tab);
+        // On mobile (≤640px), close the sidebar overlay after navigation
+        if (window.innerWidth <= 640 && !state.settings.navCollapsed) {
+          state.applySettings({ ...state.settings, navCollapsed: true });
+        }
       }}
       title=${titleForTab(tab)}
     >

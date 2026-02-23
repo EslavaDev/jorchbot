@@ -604,9 +604,11 @@ Tunnels permite gestionar rutas del proxy desde la GUI.
 
 ## 7. Fases de Desarrollo
 
-> **NOTA (rev. 2)**: Este resumen de alto nivel se reemplazo por el roadmap detallado
-> en [phases-index.md](./phases-index.md) con 10 fases independientes.
-> Las fases originales "MVP" y "Expansion" se distribuyeron en fases 0-9.
+> **NOTA (rev. 3)**: Este resumen de alto nivel se reemplazo por el roadmap detallado
+> en [phases-index.md](./phases-index.md) con 12+ fases independientes.
+> Las fases originales "MVP" y "Expansion" se distribuyeron en fases 0-12.
+> Multi-LLM se separo de seguridad: Fase 8 = seguridad pura, Fase 10 = AgentRunner
+> abstraction, Fase 11 = headless orchestrator con MCP/memoria/cron.
 > Ver seccion 17 para los cambios arquitecturales derivados del analisis DeepWiki.
 
 ### Fase 1 - MVP (revisado)
@@ -629,11 +631,13 @@ Tunnels permite gestionar rutas del proxy desde la GUI.
 
 ### Fase 2 - Expansion
 
-- [ ] TOTP 2FA cada 30 min (encima de DM pairing existente)
-- [ ] App movil propia
-- [ ] Soporte multi-LLM (Codex, Gemini)
-- [ ] Encriptacion de keys at-rest + keychain del OS
-- [ ] GUI avanzada (API keys management, analytics)
+- [ ] TOTP 2FA cada 30 min (encima de DM pairing existente) — Fase 8
+- [ ] Encriptacion de keys at-rest + keychain del OS — Fase 8
+- [ ] App movil propia — Fase 9
+- [ ] AgentRunner abstraction (interfaz abstracta, tool approval desacoplado) — Fase 10
+- [ ] Soporte multi-LLM (Codex, Gemini) via RunnerRegistry — Fase 10
+- [ ] Headless orchestrator (MCP server, memoria vectorial, cron, sub-agentes) — Fase 11
+- [ ] GUI avanzada (API keys management, analytics) — Fases 8, 11
 - [ ] Hot-reload detection + notificacion al chat
 - [ ] Screenshots automaticos del preview y envio al chat
 - [ ] Soporte de grupos en WP (cuando Kapso lo habilite)

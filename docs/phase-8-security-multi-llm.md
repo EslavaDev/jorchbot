@@ -1,9 +1,13 @@
-# Fase 8 - Seguridad + Multi-LLM
+# Fase 8 - Seguridad
 
 > **Estado**: Pendiente
 > **Dependencia**: Fase 6
-> **Entregable**: TOTP 2FA, encryption de keys at-rest, keychain del OS, soporte multi-LLM (Codex, Gemini)
-> **Al terminar**: JorchBot pide TOTP cada 30 min, API keys encriptadas en disco, y puedes usar Codex o Gemini ademas de Claude Code
+> **Entregable**: TOTP 2FA, encryption de keys at-rest, keychain del OS, audit logging
+> **Al terminar**: JorchBot pide TOTP cada 30 min, API keys encriptadas en disco, master key en keychain del OS, y audit log de acciones de seguridad
+>
+> **Nota**: La parte de Multi-LLM (AgentRunner interface, CodexRunner, GeminiRunner,
+> RunnerRegistry) se movio a [Fase 10 — AgentRunner Abstraction](./phase-10-agent-runner.md).
+> Fase 8 se enfoca exclusivamente en seguridad.
 
 ---
 
@@ -40,29 +44,19 @@
 
 ## Objetivo
 
-Agregar capas de seguridad adicionales sobre lo que OpenClaw ya provee
-(TOTP 2FA, encryption, keychain) y abrir JorchBot a multiples LLMs
-para que el usuario pueda elegir entre Claude Code, Codex, y Gemini.
+Agregar capas de seguridad adicionales sobre lo que OpenClaw ya provee:
+TOTP 2FA, encryption at-rest, integracion con keychain del OS, y audit logging.
 
 ---
 
 ## Entregables
-
-### Seguridad
 
 1. TOTP 2FA (cada 30 minutos, sobre DM pairing)
 2. Encryption at-rest para keys y tokens (AES-256-GCM)
 3. Integracion con keychain del OS
 4. Audit logging
 5. GUI: pagina de seguridad
-
-### Multi-LLM
-
-6. LLM abstraction layer (LLMRunner interface)
-7. Codex Runner (OpenAI Codex headless)
-8. Gemini Runner (Google Gemini Code Assist)
-9. Seleccion de LLM por proyecto en Jorchfile
-10. GUI: pagina de API keys management
+6. GUI: pagina de API keys management (keys encriptadas)
 
 ---
 
@@ -127,13 +121,21 @@ Encriptar keys, tokens, y datos sensibles almacenados en disco.
 
 **Que se encripta**:
 
-| Dato                | Ubicacion                   | Estado actual |
-| ------------------- | --------------------------- | ------------- |
-| API keys de LLMs    | `~/.jorchbot/config.json`   | Texto plano   |
-| Kapso API key       | `~/.jorchbot/config.json`   | Texto plano   |
-| Telegram bot token  | `~/.jorchbot/jorchbot.json` | Texto plano   |
-| TOTP secret         | `~/.jorchbot/jorchbot.db`   | Texto plano   |
-| Session transcripts | `~/.jorchbot/sessions/`     | Texto plano   |
+> **Nota**: Todo vive en `~/.jorchbot/`. El archivo `jorchbot.json` consolida
+> la config de Layer 1 (OpenClaw, top-level) y Layer 2 (JorchBot, bajo la key `jorchbot`).
+> No existe un `config.json` separado.
+
+| Dato                   | Ubicacion                                                        | Estado actual |
+| ---------------------- | ---------------------------------------------------------------- | ------------- |
+| API keys de LLMs       | `jorchbot.json` → `models.providers[name].apiKey` (Layer 1)      | Texto plano   |
+| Kapso API key          | `jorchbot.json` → `jorchbot.channels.kapso.apiKey`               | Texto plano   |
+| Kapso webhook secret   | `jorchbot.json` → `jorchbot.channels.kapso.webhookSecret`        | Texto plano   |
+| Telegram bot token     | `jorchbot.json` → `jorchbot.channels.telegram.botToken`          | Texto plano   |
+| Gateway auth token/pwd | `jorchbot.json` → `gateway.auth.token` / `gateway.auth.password` | Texto plano   |
+| OAuth tokens           | `~/.jorchbot/credentials/oauth.json`                             | Texto plano   |
+| TOTP secret (futuro)   | `~/.jorchbot/jorchbot.db` → tabla `settings`                     | N/A (Fase 8)  |
+| Mensajes de sesiones   | `~/.jorchbot/jorchbot.db` → tabla `messages`                     | Texto plano   |
+| Memory embeddings      | `~/.jorchbot/memory/` (per-agent SQLite)                         | Texto plano   |
 
 **Implementacion**:
 
@@ -161,7 +163,7 @@ interface EncryptedData {
 ```
 
 - [ ] Migrar keys existentes de texto plano a encriptado
-- [ ] Formato en config: `{ "$encrypted": "..." }` para valores encriptados
+- [ ] Formato en jorchbot.json: `{ "$encrypted": "..." }` para valores encriptados
 - [ ] Al iniciar Gateway: pedir master key o leer de keychain
 - [ ] Si master key no disponible: modo degradado (solo features sin keys)
 
@@ -208,125 +210,9 @@ Registrar todas las acciones de seguridad para auditoria.
 
 ---
 
-## Tareas — Multi-LLM
+## Tareas — GUI de Seguridad y API Keys
 
-### 8.5 LLM Abstraction Layer
-
-Crear una interfaz abstracta que permita usar diferentes LLMs como backend.
-
-```typescript
-// src/runners/llm-runner.ts
-interface LLMRunner {
-  readonly name: string; // "claude", "codex", "gemini"
-  readonly displayName: string; // "Claude Code", "OpenAI Codex", "Gemini Code Assist"
-
-  start(config: LLMSessionConfig): Promise<LLMSession>;
-  resume(sessionId: string, message: string): Promise<void>;
-  stop(sessionId: string): Promise<void>;
-
-  onOutput(callback: (event: LLMOutputEvent) => void): void;
-  onApproval(callback: (event: LLMApprovalEvent) => void): void;
-  onError(callback: (event: LLMErrorEvent) => void): void;
-}
-
-interface LLMSessionConfig {
-  project: string;
-  workingDir: string;
-  instructions?: string;
-  allowedTools?: string[];
-  approvalMode: ApprovalMode;
-}
-
-interface LLMOutputEvent {
-  sessionId: string;
-  type: "text" | "tool_use" | "tool_result" | "completion";
-  content: string;
-  metadata?: Record<string, unknown>;
-}
-
-interface LLMApprovalEvent {
-  sessionId: string;
-  actionId: string;
-  tool: string;
-  description: string;
-  details: string;
-}
-```
-
-- [ ] Definir interfaz `LLMRunner` en `src/runners/llm-runner.ts`
-- [ ] Refactorizar `ClaudeRunner` para implementar `LLMRunner`
-- [ ] Crear `LLMRunnerRegistry` para registrar runners disponibles
-- [ ] SessionManager selecciona runner segun config del proyecto
-
-**Criterio de aceptacion**: ClaudeRunner implementa LLMRunner. Nuevos runners se registran sin modificar SessionManager.
-
-### 8.6 Codex Runner
-
-Runner para OpenAI Codex (CLI headless).
-
-> **NOTA**: OpenAI Codex CLI es similar a Claude Code pero usa modelos de OpenAI.
-> El CLI se llama `codex` y tiene flags similares.
-
-- [ ] Investigar Codex CLI: flags, output format, session management
-- [ ] Implementar `CodexRunner` que implementa `LLMRunner`
-- [ ] Mapear output de Codex al formato unificado de `LLMOutputEvent`
-- [ ] Mapear aprobaciones de Codex a `LLMApprovalEvent`
-- [ ] Requiere API key de OpenAI (almacenada encriptada, 8.2)
-
-**Criterio de aceptacion**: `/new frontend --llm codex` crea sesion con Codex. Output se muestra igual que Claude.
-
-### 8.7 Gemini Runner
-
-Runner para Google Gemini Code Assist.
-
-> **NOTA**: La integracion con Gemini depende del estado de su CLI/SDK al
-> momento de implementacion. Puede ser via API directa o via CLI wrapper.
-
-- [ ] Investigar Gemini Code Assist: CLI disponible, API, SDK
-- [ ] Implementar `GeminiRunner` que implementa `LLMRunner`
-- [ ] Mapear output y aprobaciones al formato unificado
-- [ ] Requiere API key de Google (almacenada encriptada, 8.2)
-
-**Criterio de aceptacion**: `/new frontend --llm gemini` crea sesion con Gemini.
-
-### 8.8 Seleccion de LLM por Proyecto
-
-El usuario puede elegir que LLM usar por proyecto en el Jorchfile o al crear sesion.
-
-```makefile
-# ~/.jorchbot/Jorchfile
-PROJECT frontend
-  path = ~/projects/my-app/frontend
-  llm = claude                    # default
-  instructions = Experto en React
-
-PROJECT backend
-  path = ~/projects/my-app/backend
-  llm = codex                     # usa Codex para este proyecto
-  instructions = Python backend
-
-PROJECT scripts
-  path = ~/projects/automation
-  llm = gemini                    # usa Gemini
-```
-
-- [ ] Agregar campo `llm` al Jorchfile parser (Fase 3 extension)
-- [ ] `/new frontend` usa el LLM del Jorchfile
-- [ ] `/new frontend --llm codex` override del Jorchfile
-- [ ] `/list` muestra que LLM usa cada sesion
-- [ ] Default global configurable en config.json: `"defaultLLM": "claude"`
-
-```
-User: /list
-Bot:  Sesiones activas:
-      * frontend (Claude Code) - Context: 23% - confirm+verbose
-      o backend (Codex) - Context: 12% - auto+summary
-      o scripts (Gemini) - Context: 5% - auto+silent
-```
-
-**Criterio de aceptacion**: Diferentes sesiones pueden usar diferentes LLMs.
-
-### 8.9 GUI: Seguridad y API Keys
+### 8.5 GUI: Seguridad y API Keys
 
 Extender la GUI (Fase 6) con paginas de seguridad y API keys.
 
@@ -351,16 +237,30 @@ Extender la GUI (Fase 6) con paginas de seguridad y API keys.
 - [ ] Las keys se envian encriptadas al backend y se almacenan encriptadas
 - [ ] Test button: verifica que la key funciona con el provider
 
-**Criterio de aceptacion**: Desde la GUI puedes agregar una API key de OpenAI, verificar que funciona, y usarla con Codex.
+**Criterio de aceptacion**: Desde la GUI puedes agregar una API key, verificar que funciona, y almacenarla encriptada.
+
+---
+
+## Tareas movidas a Fase 10
+
+> Las siguientes tareas se movieron a [Fase 10 — AgentRunner Abstraction](./phase-10-agent-runner.md):
+>
+> - ~~8.5 LLM Abstraction Layer~~ → 10.1 Interfaz AgentRunner
+> - ~~8.6 Codex Runner~~ → 10.4 CodexRunner
+> - ~~8.7 Gemini Runner~~ → 10.5 GeminiRunner
+> - ~~8.8 Seleccion de LLM por Proyecto~~ → 10.9 SessionManager Evolution
+>
+> Fase 10 expande estas tareas con tool approval abstraction, output normalization,
+> runner lifecycle management, y RunnerRegistry. Ver el documento completo para detalles.
 
 ---
 
 ## NO se construye en esta fase
 
 - Hardware security keys (FIDO2/WebAuthn) — demasiado complejo para CLI
-- OAuth flows para providers (solo API keys directas)
+- OAuth flows para nuevos providers (OpenClaw ya tiene OAuth para Anthropic; nuevos providers solo API keys directas)
 - Key rotation automatica
-- Encryption de session transcripts (solo keys y tokens)
+- Encryption de mensajes en DB (solo keys y tokens en jorchbot.json)
 - Zero-knowledge architecture
 - IP allowlisting (Tailscale ya maneja acceso de red)
 
@@ -368,20 +268,12 @@ Extender la GUI (Fase 6) con paginas de seguridad y API keys.
 
 ## Definicion de "Terminado"
 
-### Seguridad
-
 - [ ] TOTP 2FA funciona: setup via QR, verificacion cada 30 min, pausa en timeout
 - [ ] Keys encriptadas en disco con AES-256-GCM
 - [ ] Master key en keychain del OS (macOS al menos)
 - [ ] Audit log registra todos los eventos de seguridad
 - [ ] GUI tiene pagina de seguridad
-
-### Multi-LLM
-
-- [ ] LLMRunner interface definida y ClaudeRunner refactorizado
-- [ ] Al menos un runner adicional funcional (Codex o Gemini)
-- [ ] Seleccion de LLM por proyecto en Jorchfile
-- [ ] GUI tiene pagina de API keys
+- [ ] GUI tiene pagina de API keys (encriptadas)
 - [ ] Todos los tests pasan
 - [ ] `pnpm check` pasa sin errores
 
@@ -393,6 +285,4 @@ Extender la GUI (Fase 6) con paginas de seguridad y API keys.
 - AES-256-GCM es el estandar NIST recomendado para encryption at-rest. No usar CBC.
 - `keytar` es un binding nativo que requiere compilacion. Alternativa: `@aspect-build/secrets` o `node-keychain`.
 - La master key nunca se almacena en la DB. Solo en keychain del OS o en memoria durante la sesion.
-- Para multi-LLM, cada runner es un child_process independiente. No comparten estado.
-- Codex y Gemini pueden no tener CLIs headless equivalentes a Claude Code. En ese caso, usar sus APIs directamente con un wrapper que simula el mismo flujo.
 - OpenClaw ya tiene multi-key failover con error classification. JorchBot puede reusar esa logica para los API keys de nuevos providers.

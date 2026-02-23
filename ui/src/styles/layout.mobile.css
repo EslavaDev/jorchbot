@@ -44,7 +44,156 @@
   }
 }
 
-/* Mobile-specific styles */
+/* ===========================================
+   Phone: Hamburger sidebar overlay + touch targets
+   Breakpoint: 640px (per Phase 6L spec)
+   =========================================== */
+@media (max-width: 640px) {
+  /* Sidebar: hidden by default, opens as fixed overlay */
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--shell-topbar-height) auto 1fr;
+    grid-template-areas:
+      "topbar"
+      "nav"
+      "content";
+  }
+
+  .nav {
+    display: none;
+    position: fixed;
+    top: var(--shell-topbar-height);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    background: var(--bg);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 16px 12px;
+    flex-direction: column;
+    border-right: none;
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+  }
+
+  /* When nav is NOT collapsed, show the overlay */
+  .shell:not(.shell--nav-collapsed) .nav {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Restore vertical sidebar layout for overlay */
+  .shell:not(.shell--nav-collapsed) .nav .nav-group {
+    display: grid;
+    gap: 2px;
+    margin-bottom: 16px;
+  }
+
+  .shell:not(.shell--nav-collapsed) .nav .nav-group__items {
+    display: grid;
+    gap: 1px;
+  }
+
+  .shell:not(.shell--nav-collapsed) .nav .nav-label {
+    display: flex;
+  }
+
+  .shell:not(.shell--nav-collapsed) .nav .nav-group--collapsed .nav-group__items {
+    display: none;
+  }
+
+  .shell:not(.shell--nav-collapsed) .nav .nav-item {
+    white-space: normal;
+    flex-shrink: initial;
+    padding: 10px 12px;
+    font-size: 14px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* Default collapsed state: hide the nav completely */
+  .shell--nav-collapsed .nav {
+    display: none;
+  }
+
+  /* Hamburger toggle always visible on phone */
+  .nav-collapse-toggle {
+    display: flex;
+  }
+
+  /* Touch targets: 44px minimum for all interactive elements */
+  .btn,
+  .nav-item,
+  .pill[role="button"],
+  button,
+  select,
+  .nav-collapse-toggle,
+  .theme-toggle__button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Content padding: 12px on mobile */
+  .content {
+    padding: 12px 12px 24px;
+    gap: 12px;
+  }
+
+  .content-header {
+    display: none;
+  }
+
+  /* Workspace cards: single-column */
+  .grid-cols-2,
+  .grid-cols-3 {
+    grid-template-columns: 1fr;
+  }
+
+  /* Overview stat grid: 2 cols on phone */
+  .stat-grid {
+    gap: 8px;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Notes grid: single column */
+  .note-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  /* Forms: single column */
+  .form-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  /* Lists: single column on phone */
+  .list-item {
+    grid-template-columns: 1fr;
+    padding: 10px;
+    border-radius: var(--radius-md);
+  }
+
+  .list-meta {
+    min-width: 0;
+    text-align: left;
+  }
+
+  /* Jorchfile: force form mode on phone (text mode toggle hidden via component) */
+  .jb-jorchfile-text-toggle {
+    display: none;
+  }
+
+  /* Tunnel URLs: prevent overflow */
+  .mono {
+    overflow-wrap: anywhere;
+    word-break: break-all;
+  }
+}
+
+/* Mobile-specific styles (refines phone breakpoint) */
 @media (max-width: 600px) {
   .shell {
     --shell-pad: 8px;
@@ -94,42 +243,10 @@
     display: none;
   }
 
-  /* Nav */
-  .nav {
+  /* Nav: refine overlay items for smaller screens */
+  .shell:not(.shell--nav-collapsed) .nav .nav-item {
     padding: 8px 10px;
-    gap: 4px;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-
-  .nav::-webkit-scrollbar {
-    display: none;
-  }
-
-  .nav-group {
-    display: contents;
-  }
-
-  .nav-label {
-    display: none;
-  }
-
-  .nav-item {
-    padding: 6px 10px;
-    font-size: 12px;
-    border-radius: var(--radius-md);
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  /* Content */
-  .content-header {
-    display: none;
-  }
-
-  .content {
-    padding: 4px 4px 16px;
-    gap: 12px;
+    font-size: 13px;
   }
 
   /* Cards */
@@ -143,11 +260,6 @@
   }
 
   /* Stats */
-  .stat-grid {
-    gap: 8px;
-    grid-template-columns: repeat(2, 1fr);
-  }
-
   .stat {
     padding: 10px;
     border-radius: var(--radius-md);
@@ -161,18 +273,7 @@
     font-size: 18px;
   }
 
-  /* Notes */
-  .note-grid {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-
-  /* Forms */
-  .form-grid {
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
-
+  /* Form inputs */
   .field input,
   .field textarea,
   .field select {
@@ -268,11 +369,6 @@
   }
 
   /* Lists */
-  .list-item {
-    padding: 10px;
-    border-radius: var(--radius-md);
-  }
-
   .list-title {
     font-size: 13px;
   }

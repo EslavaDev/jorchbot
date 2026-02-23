@@ -113,7 +113,10 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(gh issue view:*)",
       "WebFetch(domain:tailscale.com)",
-      "WebFetch(domain:www.sambaiz.net)"
+      "WebFetch(domain:www.sambaiz.net)",
+      "WebFetch(domain:layered.dev)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:thenewstack.io)"
     ]
   },
   "enableAllProjectMcpServers": true,

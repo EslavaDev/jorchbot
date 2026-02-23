@@ -77,13 +77,21 @@ export const VISIBLE_TAB_GROUPS = JB_TAB_GROUPS.map((group) => ({
   tabs: group.tabs.filter((tab) => !HIDDEN_TABS.has(tab)),
 })).filter((group) => group.tabs.length > 0);
 
-/** Title overrides for renamed/new JorchBot tabs. */
-const JB_TAB_TITLES: Partial<Record<Tab, string>> = {
-  nodes: "Devices",
-  workspaces: "Workspaces",
-  tunnels: "Tunnels",
-  jorchfile: "Jorchfile",
-};
+/** Title overrides for renamed/new JorchBot tabs (uses i18n). */
+function jbTabTitle(tab: Tab): string | null {
+  switch (tab) {
+    case "nodes":
+      return t("navigation.devices");
+    case "workspaces":
+      return t("tabs.workspaces");
+    case "tunnels":
+      return t("tabs.tunnels");
+    case "jorchfile":
+      return t("tabs.jorchfile");
+    default:
+      return null;
+  }
+}
 
 const PATH_TO_TAB = new Map(Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as Tab]));
 
@@ -211,7 +219,7 @@ export function iconForTab(tab: Tab): IconName {
 }
 
 export function titleForTab(tab: Tab) {
-  return JB_TAB_TITLES[tab] ?? t(`tabs.${tab}`);
+  return jbTabTitle(tab) ?? t(`tabs.${tab}`);
 }
 
 export function subtitleForTab(tab: Tab) {

@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { t } from "../../i18n/index.ts";
 import type { WorkspaceView, WorkspacesListResult } from "../types.ts";
 
 export type WorkspacesProps = {
@@ -54,7 +55,7 @@ function renderWorkspaceCard(ws: WorkspaceView, props: WorkspacesProps) {
         ${
           ws.focused
             ? html`
-                <span class="pill" style="font-size: 11px">focused</span>
+                <span class="pill" style="font-size: 11px">${t("workspaces.focused")}</span>
               `
             : nothing
         }
@@ -74,7 +75,7 @@ function renderWorkspaceCard(ws: WorkspaceView, props: WorkspacesProps) {
         ws.commands.length > 0
           ? html`
           <div style="margin-bottom: 8px; font-size: 12px;">
-            <span class="muted">Commands:</span>
+            <span class="muted">${t("common.commands")}:</span>
             ${ws.commands.map(
               (cmd) =>
                 html`<span class="pill" style="font-size: 11px; margin-left: 4px;">${cmd.name}</span>`,
@@ -87,14 +88,14 @@ function renderWorkspaceCard(ws: WorkspaceView, props: WorkspacesProps) {
         ${
           ws.focused
             ? nothing
-            : html`<button class="btn btn--sm" @click=${() => props.onFocus(ws.name)}>Focus</button>`
+            : html`<button class="btn btn--sm" @click=${() => props.onFocus(ws.name)}>${t("common.focus")}</button>`
         }
-        <button class="btn btn--sm" @click=${() => props.onCompact(ws.name)}>Compact</button>
-        <button class="btn btn--sm" @click=${() => props.onStop(ws.name)}>Stop</button>
-        <button class="btn btn--sm" @click=${() => props.onRestart(ws.name)}>Restart</button>
+        <button class="btn btn--sm" @click=${() => props.onCompact(ws.name)}>${t("common.compact")}</button>
+        <button class="btn btn--sm" @click=${() => props.onStop(ws.name)}>${t("common.stop")}</button>
+        <button class="btn btn--sm" @click=${() => props.onRestart(ws.name)}>${t("common.restart")}</button>
         ${
           !ws.enabled
-            ? html`<button class="btn btn--sm btn--danger" @click=${() => props.onDelete(ws.name)}>Delete</button>`
+            ? html`<button class="btn btn--sm btn--danger" @click=${() => props.onDelete(ws.name)}>${t("common.delete")}</button>`
             : nothing
         }
       </div>
@@ -108,7 +109,7 @@ export function renderWorkspaces(props: WorkspacesProps) {
     <section>
       <div class="row" style="margin-bottom: 16px; gap: 8px; align-items: center;">
         <button class="btn" ?disabled=${props.loading} @click=${props.onRefresh}>
-          ${props.loading ? "Loading\u2026" : "Refresh"}
+          ${props.loading ? t("common.loading") : t("common.refresh")}
         </button>
       </div>
       ${props.error ? html`<div class="callout danger" style="margin-bottom: 12px;">${props.error}</div>` : nothing}
@@ -116,7 +117,7 @@ export function renderWorkspaces(props: WorkspacesProps) {
         workspaces.length === 0 && !props.loading
           ? html`
               <div class="muted" style="padding: 24px 0">
-                No workspaces found. Create a session to see it here.
+                ${t("workspaces.noWorkspaces")}
               </div>
             `
           : nothing

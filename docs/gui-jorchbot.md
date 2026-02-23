@@ -1,5 +1,7 @@
 # JorchBot GUI — Hallazgos Tecnicos y Plan de Adaptacion de la Control UI
 
+## DONE
+
 > **Fase**: 6 (GUI de Configuracion)
 > **Dependencia**: Fase 4 (Tunnels) — acceso via Tailscale Serve
 > **Base**: Control UI de OpenClaw (Lit 3.x + Vite 7.x)
@@ -88,7 +90,10 @@ Definidos en `ui/src/ui/navigation.ts`:
 ```typescript
 TAB_GROUPS = [
   { label: "chat", tabs: ["chat"] },
-  { label: "control", tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"] },
+  {
+    label: "control",
+    tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
+  },
   { label: "agent", tabs: ["agents", "skills", "nodes"] },
   { label: "settings", tabs: ["config", "debug", "logs"] },
 ];
@@ -571,14 +576,24 @@ export function attachWebSocket(httpServer: Server, handlers: RpcHandlers) {
               type: "res",
               id: frame.id,
               ok: false,
-              error: { code: "METHOD_NOT_FOUND", message: `Unknown: ${frame.method}` },
+              error: {
+                code: "METHOD_NOT_FOUND",
+                message: `Unknown: ${frame.method}`,
+              },
             }),
           );
           return;
         }
         try {
           const result = await handler(frame.params);
-          ws.send(JSON.stringify({ type: "res", id: frame.id, ok: true, payload: result }));
+          ws.send(
+            JSON.stringify({
+              type: "res",
+              id: frame.id,
+              ok: true,
+              payload: result,
+            }),
+          );
         } catch (err) {
           ws.send(
             JSON.stringify({

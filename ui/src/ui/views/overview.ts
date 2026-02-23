@@ -196,6 +196,7 @@ export function renderOverview(props: OverviewProps) {
               }}
             >
               <option value="en">${t("languages.en")}</option>
+              <option value="es">${t("languages.es")}</option>
               <option value="zh-CN">${t("languages.zhCN")}</option>
               <option value="zh-TW">${t("languages.zhTW")}</option>
               <option value="pt-BR">${t("languages.ptBR")}</option>
@@ -254,17 +255,17 @@ export function renderOverview(props: OverviewProps) {
 
     <section class="grid grid-cols-3" style="margin-top: 18px;">
       <div class="card stat-card">
-        <div class="stat-label">Workspaces</div>
+        <div class="stat-label">${t("overview.statsCards.workspaces")}</div>
         <div class="stat-value">${props.sessionsCount ?? t("common.na")}</div>
-        <div class="muted">Active Claude Code sessions</div>
+        <div class="muted">${t("overview.statsCards.activeSessions")}</div>
       </div>
       <div class="card stat-card">
         <div class="stat-label">${t("overview.snapshot.uptime")}</div>
         <div class="stat-value">${uptime}</div>
-        <div class="muted">Gateway uptime</div>
+        <div class="muted">${t("overview.statsCards.gatewayUptime")}</div>
       </div>
       <div class="card stat-card">
-        <div class="stat-label">Channels</div>
+        <div class="stat-label">${t("overview.statsCards.channels")}</div>
         <div class="stat-value">
           ${props.lastChannelsRefresh ? t("common.ok") : t("common.na")}
         </div>
@@ -283,12 +284,12 @@ export function renderOverview(props: OverviewProps) {
           </div>
         </div>
         <div>
-          <div class="note-title">Workspaces</div>
-          <div class="muted">Manage Claude Code sessions from the Workspaces tab. Each workspace runs a headless Claude Code instance.</div>
+          <div class="note-title">${t("overview.notes.workspacesTitle")}</div>
+          <div class="muted">${t("overview.notes.workspacesText")}</div>
         </div>
         <div>
-          <div class="note-title">Tunnels</div>
-          <div class="muted">Expose local ports via Tailscale Serve (private) or Funnel (public). Manage from the Tunnels tab.</div>
+          <div class="note-title">${t("overview.notes.tunnelsTitle")}</div>
+          <div class="muted">${t("overview.notes.tunnelsText")}</div>
         </div>
       </div>
     </section>

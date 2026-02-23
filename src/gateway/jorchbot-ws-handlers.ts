@@ -836,6 +836,18 @@ export function buildRpcHandlers(deps: RpcHandlerDeps): Record<string, RpcHandle
         })),
       };
     },
+
+    // --- Exec approvals stubs ---
+    // The OpenClaw UI loads exec approvals on the Nodes tab. JorchBot doesn't
+    // use the OpenClaw exec-approvals file system, so return empty snapshots
+    // to prevent "Unknown method" errors in the UI.
+    "exec.approvals.get": () => {
+      return { path: "", exists: false, hash: "", file: {} };
+    },
+
+    "exec.approvals.set": () => {
+      return { path: "", exists: false, hash: "", file: {} };
+    },
   };
 }
 

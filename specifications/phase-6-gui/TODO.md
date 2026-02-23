@@ -537,25 +537,25 @@
 
 **CSS changes:**
 
-- [ ] L.1 — Sidebar: `@media (max-width: 640px)` → hide sidebar, show hamburger toggle button in header, sidebar opens as fixed overlay with `z-index: 100`
-- [ ] L.2 — Workspace cards: single-column grid `grid-template-columns: 1fr` at ≤640px
-- [ ] L.3 — Touch targets: all `<button>`, action items, interactive elements → `min-height: 44px; min-width: 44px`
-- [ ] L.4 — Content padding: reduce to `12px` on mobile
-- [ ] L.5 — Remove all hover-dependent interactions: ensure no functionality requires `:hover` — use click/tap only, hover styles are supplemental only
+- [x] L.1 — Sidebar: `@media (max-width: 640px)` → hide sidebar, show hamburger toggle button in header, sidebar opens as fixed overlay with `z-index: 100`
+- [x] L.2 — Workspace cards: single-column grid `grid-template-columns: 1fr` at ≤640px
+- [x] L.3 — Touch targets: all `<button>`, action items, interactive elements → `min-height: 44px; min-width: 44px`
+- [x] L.4 — Content padding: reduce to `12px` on mobile
+- [x] L.5 — Remove all hover-dependent interactions: ensure no functionality requires `:hover` — use click/tap only, hover styles are supplemental only
 
 **Per-tab verification:**
 
-- [ ] L.6 — Tunnel list: verify URLs don't overflow, cards stack vertically, stop buttons tappable
-- [ ] L.7 — Jorchfile editor: force form mode on ≤640px (hide text mode toggle), fields stack vertically
-- [ ] L.8 — Devices tab: sections stack vertically, all buttons tappable
-- [ ] L.9 — Logs tab: touch scroll works, auto-scroll toggle accessible
-- [ ] L.10 — Overview: workspace summary cards stack, context bars readable
+- [x] L.6 — Tunnel list: verify URLs don't overflow, cards stack vertically, stop buttons tappable
+- [x] L.7 — Jorchfile editor: force form mode on ≤640px (hide text mode toggle), fields stack vertically
+- [x] L.8 — Devices tab: sections stack vertically, all buttons tappable
+- [x] L.9 — Logs tab: touch scroll works, auto-scroll toggle accessible
+- [x] L.10 — Overview: workspace summary cards stack, context bars readable
 
 **Testing:**
 
 - [ ] L.11 — Test in Chrome DevTools: iPhone SE (375×667), iPhone 14 (390×844), Pixel 5 (393×851)
 - [ ] L.12 — Verify all tabs accessible via hamburger menu
-- [ ] L.13 — `pnpm check` — 0 errors, 0 warnings
+- [x] L.13 — `pnpm check` — 0 errors, 0 warnings
 
 ---
 

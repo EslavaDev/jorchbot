@@ -3,7 +3,7 @@ import type { Locale, TranslationMap } from "./types.ts";
 
 type Subscriber = (locale: Locale) => void;
 
-export const SUPPORTED_LOCALES: ReadonlyArray<Locale> = ["en", "zh-CN", "zh-TW", "pt-BR"];
+export const SUPPORTED_LOCALES: ReadonlyArray<Locale> = ["en", "es", "zh-CN", "zh-TW", "pt-BR"];
 
 export function isSupportedLocale(value: string | null | undefined): value is Locale {
   return value !== null && value !== undefined && SUPPORTED_LOCALES.includes(value as Locale);
@@ -24,7 +24,9 @@ class I18nManager {
       this.locale = saved;
     } else {
       const navLang = navigator.language;
-      if (navLang.startsWith("zh")) {
+      if (navLang.startsWith("es")) {
+        this.locale = "es";
+      } else if (navLang.startsWith("zh")) {
         this.locale = navLang === "zh-TW" || navLang === "zh-HK" ? "zh-TW" : "zh-CN";
       } else if (navLang.startsWith("pt")) {
         this.locale = "pt-BR";
@@ -47,7 +49,9 @@ class I18nManager {
     if (!this.translations[locale]) {
       try {
         let module: Record<string, TranslationMap>;
-        if (locale === "zh-CN") {
+        if (locale === "es") {
+          module = await import("../locales/es.ts");
+        } else if (locale === "zh-CN") {
           module = await import("../locales/zh-CN.ts");
         } else if (locale === "zh-TW") {
           module = await import("../locales/zh-TW.ts");
